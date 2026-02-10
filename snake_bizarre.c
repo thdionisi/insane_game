@@ -7,13 +7,13 @@
 #include <unistd.h>
 #include <time.h>
 #include <IL/il.h>
-#define WIDTH 1840 // Taille de la fenêtre
+#define WIDTH 1840 // Taille de la fenï¿½tre
 #define HEIGHT 1080	
 #define nVoitureMax 100 // Nombre de voitures dans une file
 #define nVoitureStart 1
-#define Pas 0.1 // Pourcentage de déplacement de la grenouille[0] par rapport à la taille de la fenêtre
-#define fPasV (float)Pas*HEIGHT	// Pas vertical de déplacement de la grenouille[0]
-#define fPasH (float)Pas*WIDTH	// Pas horizontal de déplacement de la grenouille[0]
+#define Pas 0.1 // Pourcentage de dï¿½placement de la grenouille[0] par rapport ï¿½ la taille de la fenï¿½tre
+#define fPasV (float)Pas*HEIGHT	// Pas vertical de dï¿½placement de la grenouille[0]
+#define fPasH (float)Pas*WIDTH	// Pas horizontal de dï¿½placement de la grenouille[0]
 
 #define up 0
 #define down 1 
@@ -26,9 +26,9 @@ GLuint bouffe[nVoitureMax];
 GLuint heros;
 
 int nVoiture = nVoitureStart;
-float sizecar=(float) 0.05; // Taille d'une ligne en pourcentage de la taille totale de la fenêtre
+float sizecar=(float) 0.05; // Taille d'une ligne en pourcentage de la taille totale de la fenï¿½tre
 float bigsizecar=0.1;
-// se détermine par : 1/(4 (2 trottoirs et un pont de deux lignes) + nbr rivières + nbr routes)
+// se dï¿½termine par : 1/(4 (2 trottoirs et un pont de deux lignes) + nbr riviï¿½res + nbr routes)
 float fDistanceUp[nVoitureMax];
 float fDistanceRight[nVoitureMax];
 float lastdistup[nVoitureMax];
@@ -37,7 +37,7 @@ float fLigne[nVoitureMax];
 float fEcart;
 float nVitesse[nVoitureMax];	// Vitesse dans la boucle Idle
 float nVitesseGrenouille=5;	// Vitesse dans la boucle Idle
-// Déplacement de la grenouille[0]
+// Dï¿½placement de la grenouille[0]
 float fHoriz=0;
 float fVertic=0;
 int dir=0;
@@ -47,7 +47,7 @@ int car_right[nVoitureMax];
 int drawTrucmucheAuMilieu = 0;int cpt;
 int changeTrucABouffer=1,cpt2=0,anctrucx=1000,anctrucy=1000;
 int points=0;
-// Déclaration des fonctions
+// Dï¿½claration des fonctions
 void vDisplay();
 void vReshape();
 void vIdle();
@@ -79,21 +79,21 @@ double myrand(double a,double b) {
 }
 void vBitmapOutput(int x, int y, char *string, void *font)
 {
-	int len,i; // len donne la longueur de la chaîne de caractères
+	int len,i; // len donne la longueur de la chaï¿½ne de caractï¿½res
 
-	glRasterPos2f(x,y); // Positionne le premier caractère de la chaîne
-	len = (int) strlen(string); // Calcule la longueur de la chaîne
-	for (i = 0; i < len; i++) glutBitmapCharacter(font,string[i]); // Affiche chaque caractère de la chaîne
+	glRasterPos2f(x,y); // Positionne le premier caractï¿½re de la chaï¿½ne
+	len = (int) strlen(string); // Calcule la longueur de la chaï¿½ne
+	for (i = 0; i < len; i++) glutBitmapCharacter(font,string[i]); // Affiche chaque caractï¿½re de la chaï¿½ne
 }
 
 void vStrokeOutput(GLfloat x, GLfloat y, char *string, void *font)
 {
 	char *p;
 
-	glPushMatrix();	// glPushMatrix et glPopMatrix sont utilisées pour sauvegarder 
-	// et restaurer les systèmes de coordonnées non translatés
-	glTranslatef(x, y, 0); // Positionne le premier caractère de la chaîne
-	for (p = string; *p; p++) glutStrokeCharacter(font, *p); // Affiche chaque caractère de la chaîne
+	glPushMatrix();	// glPushMatrix et glPopMatrix sont utilisï¿½es pour sauvegarder 
+	// et restaurer les systï¿½mes de coordonnï¿½es non translatï¿½s
+	glTranslatef(x, y, 0); // Positionne le premier caractï¿½re de la chaï¿½ne
+	for (p = string; *p; p++) glutStrokeCharacter(font, *p); // Affiche chaque caractï¿½re de la chaï¿½ne
 	glPopMatrix();
 }
 
@@ -110,8 +110,8 @@ void reset()
 	int i;
 	for (i=0;i<nVoiture;i++) 
 	{
-		fDistanceUp[i]=i*fEcart; // Réinitialisé lorsque la voiture sort de l'écran
-		fDistanceRight[i]=i*fEcart; // Réinitialisé lorsque la voiture sort de l'écran
+		fDistanceUp[i]=i*fEcart; // Rï¿½initialisï¿½ lorsque la voiture sort de l'ï¿½cran
+		fDistanceRight[i]=i*fEcart; // Rï¿½initialisï¿½ lorsque la voiture sort de l'ï¿½cran
 		car_up[i]=1;car_right[i]=1;
 		nVitesse[i]=3;
 		fLigne[i]=sizecar;
@@ -138,6 +138,7 @@ int collision(struct obj obj1, struct obj obj2)//float x1left,float x1right,floa
 }
 void keypress(unsigned char key,int x, int y)
 {
+	(void)x; (void)y;
 	switch(key) {
 		case 'q' :  glFinish();
 					glutDestroyWindow(window);
@@ -162,21 +163,21 @@ void vDisplay()
 
 	if(paused == 1)return;
 
-	glClearColor(0.5,0,4,0); // selectionne la couleur noire (qui est celle par défaut)
+	glClearColor(0.5,0,4,0); // selectionne la couleur noire (qui est celle par dï¿½faut)
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT); // efface le frame buffer
 
 
-	// Trottoir de départ
-	glBegin(GL_QUADS);	//commence le dessin d'un quadrilatère
+	// Trottoir de dï¿½part
+	glBegin(GL_QUADS);	//commence le dessin d'un quadrilatï¿½re
 	glColor3d(0.75,0.75,0.15); // trottoir de couleur grise
-	glVertex2d(-WIDTH/2,-HEIGHT/2);	//coordonnées du premier sommet
+	glVertex2d(-WIDTH/2,-HEIGHT/2);	//coordonnï¿½es du premier sommet
 	glVertex2d(WIDTH/2,-HEIGHT/2); 
 	glVertex2d(WIDTH/2,-(HEIGHT/2-sizecar*HEIGHT)); 
-	glVertex2d(-WIDTH/2,-(HEIGHT/2-sizecar*HEIGHT));	// Ordre de sommets : sens trigonométrique
+	glVertex2d(-WIDTH/2,-(HEIGHT/2-sizecar*HEIGHT));	// Ordre de sommets : sens trigonomï¿½trique
 	glEnd();
 
-	// 1ère file de la route
-	glBegin(GL_QUADS);	//commence le dessin d'un quadrilatère
+	// 1ï¿½re file de la route
+	glBegin(GL_QUADS);	//commence le dessin d'un quadrilatï¿½re
 	glColor3d(0.50,0.70,0.90); // route de couleur grise
 	glVertex2d(WIDTH/2,-(HEIGHT/2-sizecar*HEIGHT)); 
 	glVertex2d(-WIDTH/2,-(HEIGHT/2-sizecar*HEIGHT));	
@@ -187,7 +188,7 @@ void vDisplay()
 
 
 	// Trottoir du milieu
-	glBegin(GL_QUADS);	//commence le dessin d'un quadrilatère
+	glBegin(GL_QUADS);	//commence le dessin d'un quadrilatï¿½re
 	glColor3d(0.35,0.15,0.75); // trottoir de couleur grise
 	glVertex2d(WIDTH/2,-(HEIGHT/2-2*sizecar*HEIGHT)); 
 	glVertex2d(-WIDTH/2,-(HEIGHT/2-2*sizecar*HEIGHT));	
@@ -199,10 +200,10 @@ void vDisplay()
 	// "Grenouille"
 	// grenouille[0] de couleur verte
 
-	if(fHoriz<=-(WIDTH-sizecar*HEIGHT)/2) fHoriz=-(WIDTH-sizecar*HEIGHT)/2;	//Grenouille bloquée à gauche	
-	if(fHoriz>=(WIDTH-sizecar*HEIGHT)/2) fHoriz=(WIDTH-sizecar*HEIGHT)/2;	//Grenouille bloquée à droite	
-	if(fVertic<=0) fVertic=0;	//Grenouille bloquée en bas	
-	if(fVertic>=HEIGHT - sizecar*HEIGHT) fVertic=HEIGHT-sizecar*HEIGHT;	//Grenouille bloquée en haut	
+	if(fHoriz<=-(WIDTH-sizecar*HEIGHT)/2) fHoriz=-(WIDTH-sizecar*HEIGHT)/2;	//Grenouille bloquï¿½e ï¿½ gauche	
+	if(fHoriz>=(WIDTH-sizecar*HEIGHT)/2) fHoriz=(WIDTH-sizecar*HEIGHT)/2;	//Grenouille bloquï¿½e ï¿½ droite	
+	if(fVertic<=0) fVertic=0;	//Grenouille bloquï¿½e en bas	
+	if(fVertic>=HEIGHT - sizecar*HEIGHT) fVertic=HEIGHT-sizecar*HEIGHT;	//Grenouille bloquï¿½e en haut	
 
 	float xleftG=-sizecar*HEIGHT/2+fHoriz;
 	float xrightG=sizecar*HEIGHT/2+fHoriz;
@@ -221,7 +222,7 @@ void vDisplay()
 	glBegin(GL_QUADS);	
 
 	//glColor3d(0,0.46,0.25); 
-	glClearColor(0.0,0,0,0); // selectionne la couleur noire (qui est celle par défaut)
+	glClearColor(0.0,0,0,0); // selectionne la couleur noire (qui est celle par dï¿½faut)
 	glTexCoord2i(0, 0); 
 	glVertex2d(xleftG,yupG);
 	glTexCoord2i(1, 0); 
@@ -264,7 +265,7 @@ void vDisplay()
 	}
 
 	//printf("x %f y %f %f %f\n",xleft,xright,yup,ydown);
-	glClearColor(0.0,0,0,0); // selectionne la couleur noire (qui est celle par défaut)
+	glClearColor(0.0,0,0,0); // selectionne la couleur noire (qui est celle par dï¿½faut)
 	glTexCoord2i(0, 0); 
 	glVertex2d(xleft,yup);
 	glTexCoord2i(1, 0); 
@@ -275,7 +276,7 @@ void vDisplay()
 	glVertex2d(xleft,ydown);
 	glEnd();
 	glDisable(GL_TEXTURE_2D);
-	// Boucle de création des voitures
+	// Boucle de crï¿½ation des voitures
 	for (i=0;i<nVoiture;i++)
 	{	
 		// Voiture i
@@ -304,7 +305,7 @@ void vDisplay()
 		glMatrixMode(GL_MODELVIEW);
 		glColor3d(1.,0.2,0.2); // voiture de couleur bleue
 		glBindTexture(GL_TEXTURE_2D,monstre[0]);
-		glBegin(GL_QUADS);	//commence le dessin d'un quadrilatère
+		glBegin(GL_QUADS);	//commence le dessin d'un quadrilatï¿½re
 
 		glTexCoord2i(0, 0); 
 		glVertex2d(xleftV,yupV);
@@ -415,8 +416,8 @@ void addvoiture()
 	setSizeAndSpeed(i);
 
 	while(dist<WIDTH/5) {
-		fDistanceUp[i]=myrand(1,HEIGHT); // Réinitialisé lorsque la voiture sort de l'écran
-		fDistanceRight[i]=myrand(1,WIDTH); // Réinitialisé lorsque la voiture sort de l'écran
+		fDistanceUp[i]=myrand(1,HEIGHT); // Rï¿½initialisï¿½ lorsque la voiture sort de l'ï¿½cran
+		fDistanceRight[i]=myrand(1,WIDTH); // Rï¿½initialisï¿½ lorsque la voiture sort de l'ï¿½cran
 		float xleftV = -WIDTH/2+fDistanceRight[i]-fLigne[i]*HEIGHT;
 		float xrightV = -WIDTH/2+fDistanceRight[i];
 		float ydownV = fDistanceUp[i]-(HEIGHT/2-fLigne[i]*HEIGHT);
@@ -440,8 +441,8 @@ void vIdle()
 		if(cpt2 % 10 == 0) {
 			int tmpup=fDistanceUp[i];
 			int tmpright=fDistanceRight[i];
-			fDistanceUp[i]+=car_up[i]*myrand(nVitesse[i]/3,nVitesse[i]); // Dépend du processeur !!! Mieux vaut utiliser un timer quand 
-			fDistanceRight[i]+=car_right[i]*myrand(nVitesse[i]/3,nVitesse[i]); // Dépend du processeur !!! Mieux vaut utiliser un timer quand 
+			fDistanceUp[i]+=car_up[i]*myrand(nVitesse[i]/3,nVitesse[i]); // Dï¿½pend du processeur !!! Mieux vaut utiliser un timer quand 
+			fDistanceRight[i]+=car_right[i]*myrand(nVitesse[i]/3,nVitesse[i]); // Dï¿½pend du processeur !!! Mieux vaut utiliser un timer quand 
 			lastdistup[i] = fDistanceUp[i] - tmpup;
 			lastdistright[i] = fDistanceRight[i] - tmpright;
 		}
@@ -450,7 +451,7 @@ void vIdle()
 			fDistanceUp[i] += lastdistup[i];
 			fDistanceRight[i] += lastdistright[i];
 		}
-		// il y a beaucoup de choses à faire dans l'Idle
+		// il y a beaucoup de choses ï¿½ faire dans l'Idle
 
 	}
 	if(dir==up)fVertic+=nVitesseGrenouille;
@@ -461,7 +462,7 @@ void vIdle()
 	cpt2++;if(cpt2==timeTrucABouffer){cpt2=0;changeTrucABouffer=1;} else changeTrucABouffer=0;
 	if(drawTrucmucheAuMilieu == 1)cpt++;
 	if(cpt==100){cpt=0;drawTrucmucheAuMilieu = 0;}
-	glutPostRedisplay(); // force le réaffichage de la scène
+	glutPostRedisplay(); // force le rï¿½affichage de la scï¿½ne
 	if(leave == 1)
 	{
 		sleep(2);
@@ -503,6 +504,7 @@ void vReshape(int w, int h)
 
 void vSpecial(int key, int x, int y)
 {
+	(void)x; (void)y;
 	int i;
 	switch (key)
 	{
@@ -546,7 +548,7 @@ int LoadImage(char *filename)
 
 
 	/* Loading of the image filename by DevIL */
-	if ( success = ilLoadImage(filename) ) 
+	if ( (success = ilLoadImage(filename)) )
 	{
 		/* Convert every colour component into unsigned byte */
 		/* You can replace IL_RGB with IL_RGBA if your image contains alpha channel */
@@ -566,22 +568,21 @@ int LoadImage(char *filename)
 
 int main( int argc, char *argv[ ])
 {
-	int i; //Compteur
 	srand(time(NULL));
 	reset();
 	int image,image2,image3;
 
 	glutInit(&argc,argv);	// initialisation de GLUT : argc et argv sont respectivement 
-	// le nombre et la liste des paramètres passées en ligne de commande
+	// le nombre et la liste des paramï¿½tres passï¿½es en ligne de commande
 
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);	// GLUT_RGBA mode "vraies couleurs" 32 bits
 	// GLUT_DOUBLE "douflle buffering" - deux tampons
 
-	glutInitWindowSize(WIDTH,HEIGHT);	// Initialisation de la largeur et de la hauteur de la fenêtre
-	glutInitWindowPosition(50,50);	// Position de la fenêtre sur l'écran par rapport au coin haut gauche
-	window = glutCreateWindow("snakouuuuu");	// Titre de la fenêtre
-	glutDisplayFunc(vDisplay); // précise la fonction à utiliser pour l'affichage 
-	glutReshapeFunc(vReshape); // précise la fonction à utiliser pour le redimensionnement 
+	glutInitWindowSize(WIDTH,HEIGHT);	// Initialisation de la largeur et de la hauteur de la fenï¿½tre
+	glutInitWindowPosition(50,50);	// Position de la fenï¿½tre sur l'ï¿½cran par rapport au coin haut gauche
+	window = glutCreateWindow("snakouuuuu");	// Titre de la fenï¿½tre
+	glutDisplayFunc(vDisplay); // prï¿½cise la fonction ï¿½ utiliser pour l'affichage 
+	glutReshapeFunc(vReshape); // prï¿½cise la fonction ï¿½ utiliser pour le redimensionnement 
 
 	if (ilGetInteger(IL_VERSION_NUM) < IL_VERSION)
 	{
@@ -602,7 +603,7 @@ int main( int argc, char *argv[ ])
 
 
 	/* OpenGL texture binding of the image loaded by DevIL  */
-	if ( image2 == -1 || image2 == -1 || image3 == -1)
+	if ( image == -1 || image2 == -1 || image3 == -1)
 	{
 		printf("Can't load picture file %s by DevIL \n", argv[1]);
 		return -1;
@@ -610,7 +611,7 @@ int main( int argc, char *argv[ ])
 	glutIdleFunc(vIdle);		// Activation du callback
 
 	glutKeyboardFunc(keypress);
-	glutSpecialFunc(vSpecial); // Gestion des touches spéciales du clavier
+	glutSpecialFunc(vSpecial); // Gestion des touches spï¿½ciales du clavier
 	glutMainLoop(); // lance le gestionnaire glut
 	return 0;
 }
