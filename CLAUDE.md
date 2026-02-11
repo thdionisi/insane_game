@@ -17,7 +17,7 @@ sudo apt-get install libgl-dev libglu1-mesa-dev freeglut3-dev libdevil-dev
 ## Utilisation
 
 ```bash
-./snake_bizarre <image_snake> <image_ennemi> <image_nourriture>
+./snake_bizarre [-d 1|2|3] <image_snake> <image_ennemi> <image_nourriture>
 ```
 
 Les 3 arguments sont des fichiers image (PNG, JPG...) charges via DevIL :
@@ -26,6 +26,14 @@ Les 3 arguments sont des fichiers image (PNG, JPG...) charges via DevIL :
 3. Image de la nourriture (ce que le snake doit manger)
 
 Au lancement, un menu dans le terminal propose 3 niveaux de difficulte (Facile, Normal, Difficile) qui ajustent la vitesse du snake et des ennemis. La fenetre s'ouvre en plein ecran.
+
+### Difficulte (`-d`)
+
+- `-d 1` Facile : ennemis lents
+- `-d 2` Normal (defaut) : vitesse equilibree
+- `-d 3` Difficile : ennemis rapides, la nourriture apparait moins souvent, et les ennemis peuvent la manger (ils grossissent et accelerent)
+
+La vitesse du snake est la meme dans tous les modes (4), ajustable en jeu avec `v`/`b`.
 
 ## Controles
 

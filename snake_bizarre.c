@@ -14,11 +14,20 @@
 #define START_ENEMIES 1
 #define SMALL_SIZE 0.05f
 #define BIG_SIZE 0.1f
+#define MAX_ENEMY_SIZE 0.25f
 
 #define DIR_UP    0
 #define DIR_DOWN  1
 #define DIR_LEFT  2
 #define DIR_RIGHT 3
+
+#define DIFF_EASY   1
+#define DIFF_NORMAL 2
+#define DIFF_HARD   3
+
+#define ORB_RADIUS 20.0f
+#define ORB_PUSH_FORCE 300.0f
+#define ORB_ANIM_DURATION 40
 
 /* ========== Types ========== */
 
@@ -29,6 +38,13 @@ typedef struct {
 	float yup;
 	float speed;
 } Rect;
+
+typedef struct {
+	float x, y;
+	int active;
+	int timer;
+	float pulse;
+} Orb;
 
 /* ========== Screen dimensions (set at runtime) ========== */
 
@@ -44,13 +60,12 @@ GLuint tex_snake;
 /* ========== Game state ========== */
 
 int window;
+int difficulty = DIFF_NORMAL;
 int num_enemies = START_ENEMIES;
 int direction = DIR_UP;
 int paused = 0;
 int game_over = 0;
 int food_eaten = 0;
-int draw_collision_effect = 0;
-int collision_timer = 0;
 int respawn_food = 1;
 int food_cycle = 0;
 int food_x = 1000;
@@ -59,11 +74,15 @@ int points = 0;
 int snake_length = 1;
 int food_timer = 600;
 
+/* ========== Orb (spawns on enemy-enemy collision) ========== */
+
+Orb orb = {0, 0, 0, 0, 0.0f};
+
 /* ========== Movement / speed ========== */
 
 float snake_x = 0;
 float snake_y = 0;
-float snake_speed = 7;
+float snake_speed = 4;
 float slow_enemy_speed = 3;
 float fast_enemy_speed = 6;
 float enemy_gap;
@@ -83,6 +102,10 @@ int   enemy_dir_x[MAX_ENEMIES];
 
 Rect snake[100];
 Rect enemy[MAX_ENEMIES];
+
+/* ========== Food rect (global for enemy-food collision) ========== */
+
+Rect food_rect;
 
 /* ========== Utility functions ========== */
 
@@ -143,11 +166,85 @@ int collision(Rect a, Rect b)
 	return 1;
 }
 
-float distance(Rect a, Rect b)
+float rect_distance(Rect a, Rect b)
 {
 	float dx = a.xright - b.xright;
 	float dy = a.yup - b.yup;
 	return sqrtf(dx * dx + dy * dy);
+}
+
+static float rect_center_x(Rect r)
+{
+	return (r.xleft + r.xright) / 2.0f;
+}
+
+static float rect_center_y(Rect r)
+{
+	return (r.ydown + r.yup) / 2.0f;
+}
+
+/* ========== Orb management ========== */
+
+static void spawn_orb(void)
+{
+	float W = screen_width;
+	float H = screen_height;
+	orb.x = rand_range(-W / 2 + 50, W / 2 - 50);
+	orb.y = rand_range(-H / 2 + 50, H / 2 - 50);
+	orb.active = 1;
+	orb.timer = ORB_ANIM_DURATION;
+	orb.pulse = 0.0f;
+}
+
+static int point_in_orb(float px, float py)
+{
+	float dx = px - orb.x;
+	float dy = py - orb.y;
+	return (dx * dx + dy * dy) < (ORB_RADIUS * 2) * (ORB_RADIUS * 2);
+}
+
+static void push_away_from_orb(float *obj_x, float *obj_y)
+{
+	float dx = *obj_x - orb.x;
+	float dy = *obj_y - orb.y;
+	float len = sqrtf(dx * dx + dy * dy);
+	if (len < 1.0f) len = 1.0f;
+	*obj_x += (dx / len) * ORB_PUSH_FORCE;
+	*obj_y += (dy / len) * ORB_PUSH_FORCE;
+}
+
+static void draw_orb(void)
+{
+	if (!orb.active)
+		return;
+
+	float scale = 1.0f + 0.3f * sinf(orb.pulse);
+	float r = ORB_RADIUS * scale;
+	int segments = 24;
+	int k;
+
+	/* Glow ring */
+	float alpha = (float)orb.timer / ORB_ANIM_DURATION;
+	glColor4f(0.8f, 0.2f, 1.0f, alpha * 0.3f);
+	glBegin(GL_TRIANGLE_FAN);
+	glVertex2f(orb.x, orb.y);
+	for (k = 0; k <= segments; k++) {
+		float angle = 2.0f * M_PI * k / segments;
+		glVertex2f(orb.x + cosf(angle) * r * 1.8f,
+		           orb.y + sinf(angle) * r * 1.8f);
+	}
+	glEnd();
+
+	/* Core */
+	glColor3f(0.9f, 0.3f, 1.0f);
+	glBegin(GL_TRIANGLE_FAN);
+	glVertex2f(orb.x, orb.y);
+	for (k = 0; k <= segments; k++) {
+		float angle = 2.0f * M_PI * k / segments;
+		glVertex2f(orb.x + cosf(angle) * r,
+		           orb.y + sinf(angle) * r);
+	}
+	glEnd();
 }
 
 /* ========== Enemy management ========== */
@@ -183,11 +280,22 @@ void add_enemy(void)
 		enemy[i].xright = xright;
 		enemy[i].ydown = ydown;
 		enemy[i].yup = yup;
-		dist = distance(enemy[i], snake[0]);
+		dist = rect_distance(enemy[i], snake[0]);
 	}
 
 	enemy_dir_y[i] = (rand_range(1, 2) == 1) ? 1 : -1;
 	enemy_dir_x[i] = (rand_range(1, 2) == 1) ? 1 : -1;
+}
+
+static void enemy_eat_food(int i)
+{
+	/* Enemy grows a bit (capped) */
+	if (enemy_size[i] < MAX_ENEMY_SIZE)
+		enemy_size[i] *= 1.15f;
+	/* Enemy gets faster */
+	enemy_speed[i] *= 1.1f;
+	/* Force food respawn */
+	respawn_food = 1;
 }
 
 /* ========== Reset ========== */
@@ -198,9 +306,15 @@ void reset(void)
 
 	snake_x = 0;
 	snake_y = 0;
-	snake_speed = 7;
+	snake_speed = 4;
 	num_enemies = START_ENEMIES;
 	enemy_gap = screen_width / 5;
+	game_over = 0;
+	points = 0;
+	snake_length = 1;
+	food_cycle = 0;
+	respawn_food = 1;
+	orb.active = 0;
 
 	for (i = 0; i < num_enemies; i++) {
 		enemy_dist_y[i] = i * enemy_gap;
@@ -306,20 +420,25 @@ void display(void)
 	float fd = fy - H / 2;
 	if (fu >= H / 2) fu = H / 2;
 
-	Rect food;
-	food.xleft = fl;
-	food.xright = fr;
-	food.ydown = fd;
-	food.yup = fu;
+	food_rect.xleft = fl;
+	food_rect.xright = fr;
+	food_rect.ydown = fd;
+	food_rect.yup = fu;
 
-	/* Check food collision before drawing */
-	if (collision(snake[0], food)) {
+	/* Check food collision (snake eats) */
+	if (collision(snake[0], food_rect)) {
 		snake_length++;
 		food_eaten = 1;
 	}
 
 	/* Draw food */
 	draw_textured_quad(tex_food[0], fl, fd, fr, fu);
+
+	/* Draw orb */
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	draw_orb();
+	glDisable(GL_BLEND);
 
 	/* Enemies */
 	for (i = 0; i < num_enemies; i++) {
@@ -351,47 +470,37 @@ void display(void)
 
 		draw_textured_quad(tex_enemy[0], ex1, ey1, ex2, ey2);
 
-		/* Enemy-enemy collision */
+		/* Enemy-enemy collision: bounce off each other based on relative positions */
 		int j;
 		for (j = 0; j < i; j++) {
-			if (collision(enemy[j], enemy[i])) {
-				if (sx1 >= ex1 && direction != DIR_RIGHT) {
-					enemy_dir_x[i] = -1;
-					enemy_dir_x[j] = 1;
-					draw_collision_effect = 1;
-				}
-				if (sy1 >= ey1 && direction != DIR_UP) {
-					enemy_dir_y[i] = -1;
-					enemy_dir_y[j] = 1;
-					draw_collision_effect = 1;
-				}
-				if (sy2 <= ey2 && direction != DIR_DOWN) {
-					enemy_dir_y[i] = 1;
-					enemy_dir_y[j] = -1;
-					draw_collision_effect = 1;
-				}
-				if (sx2 <= ex2 && direction != DIR_LEFT) {
-					enemy_dir_x[i] = 1;
-					enemy_dir_x[j] = -1;
-					draw_collision_effect = 1;
-				}
+			if (!collision(enemy[j], enemy[i]))
+				continue;
+
+			float ci_x = rect_center_x(enemy[i]);
+			float ci_y = rect_center_y(enemy[i]);
+			float cj_x = rect_center_x(enemy[j]);
+			float cj_y = rect_center_y(enemy[j]);
+			float dx = ci_x - cj_x;
+			float dy = ci_y - cj_y;
+
+			if (fabsf(dx) > fabsf(dy)) {
+				/* Horizontal separation */
+				enemy_dir_x[i] = (dx > 0) ? 1 : -1;
+				enemy_dir_x[j] = (dx > 0) ? -1 : 1;
+			} else {
+				/* Vertical separation */
+				enemy_dir_y[i] = (dy > 0) ? 1 : -1;
+				enemy_dir_y[j] = (dy > 0) ? -1 : 1;
 			}
+
+			/* Spawn an orb if none active */
+			if (!orb.active)
+				spawn_orb();
 		}
 
-		/* Collision effect flash */
-		if (draw_collision_effect) {
-			glBegin(GL_QUADS);
-			glColor3f(0.65f, 0.1f, 0.76f);
-			glVertex2d(-20, -20);
-			glVertex2d(20, 20);
-			glVertex2d(-20, 20);
-			glVertex2d(20, -20);
-			glEnd();
-		}
-
-		/* Snake eats food */
-		if (collision(snake[0], food))
-			food_eaten = 1;
+		/* Hard mode: enemy eats food */
+		if (difficulty == DIFF_HARD && collision(enemy[i], food_rect))
+			enemy_eat_food(i);
 
 		/* Enemy kills snake */
 		if (collision(enemy[i], snake[0])) {
@@ -466,11 +575,32 @@ void idle(void)
 		respawn_food = 0;
 	}
 
-	if (draw_collision_effect)
-		collision_timer++;
-	if (collision_timer == 100) {
-		collision_timer = 0;
-		draw_collision_effect = 0;
+	/* Orb logic: check if snake or enemies touch it */
+	if (orb.active) {
+		orb.pulse += 0.15f;
+		orb.timer--;
+
+		/* Snake touches orb */
+		float scx = (snake[0].xleft + snake[0].xright) / 2.0f;
+		float scy = (snake[0].ydown + snake[0].yup) / 2.0f;
+		if (point_in_orb(scx, scy)) {
+			push_away_from_orb(&snake_x, &snake_y);
+			orb.active = 0;
+		}
+
+		/* Enemies touch orb */
+		for (i = 0; i < num_enemies; i++) {
+			float ecx = rect_center_x(enemy[i]);
+			float ecy = rect_center_y(enemy[i]);
+			if (point_in_orb(ecx, ecy)) {
+				push_away_from_orb(&enemy_dist_x[i], &enemy_dist_y[i]);
+				orb.active = 0;
+				break;
+			}
+		}
+
+		if (orb.timer <= 0)
+			orb.active = 0;
 	}
 
 	glutPostRedisplay();
@@ -546,42 +676,42 @@ void special_keys(int key, int x, int y)
 	}
 }
 
-/* ========== Difficulty selection ========== */
+/* ========== Difficulty setup ========== */
 
-void select_difficulty(void)
+static void apply_difficulty(int level)
 {
-	int choice;
-
-	printf("\n=== SNAKE BIZARRE ===\n");
-	printf("Choisis la difficulte :\n");
-	printf("  1 - Facile\n");
-	printf("  2 - Normal\n");
-	printf("  3 - Difficile\n");
-	printf("Ton choix : ");
-
-	if (scanf("%d", &choice) != 1)
-		choice = 2;
-
-	switch (choice) {
-	case 1:
+	difficulty = level;
+	switch (level) {
+	case DIFF_EASY:
 		snake_speed = 4;
 		slow_enemy_speed = 2;
 		fast_enemy_speed = 4;
-		printf("Mode Facile selectionne.\n\n");
+		food_timer = 600;
 		break;
-	case 3:
-		snake_speed = 11;
+	case DIFF_HARD:
+		snake_speed = 4;
 		slow_enemy_speed = 5;
 		fast_enemy_speed = 9;
-		printf("Mode Difficile selectionne.\n\n");
+		food_timer = 1800;
 		break;
 	default:
-		snake_speed = 7;
+		difficulty = DIFF_NORMAL;
+		snake_speed = 4;
 		slow_enemy_speed = 3;
 		fast_enemy_speed = 6;
-		printf("Mode Normal selectionne.\n\n");
+		food_timer = 600;
 		break;
 	}
+}
+
+/* ========== Usage ========== */
+
+static void print_usage(const char *prog)
+{
+	printf("Usage: %s [-d 1|2|3] <image_snake> <image_ennemi> <image_nourriture>\n", prog);
+	printf("  -d 1  Facile   (ennemis lents)\n");
+	printf("  -d 2  Normal   (defaut)\n");
+	printf("  -d 3  Difficile (ennemis rapides, mangent la nourriture)\n");
 }
 
 /* ========== Main ========== */
@@ -589,11 +719,34 @@ void select_difficulty(void)
 int main(int argc, char *argv[])
 {
 	int img_snake, img_enemy, img_food;
+	int diff_level = DIFF_NORMAL;
 
 	srand(time(NULL));
 
 	glutInit(&argc, argv);
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
+
+	/* Parse -d flag (getopt-style, manual for portability) */
+	int argi = 1;
+	if (argi < argc && strcmp(argv[argi], "-d") == 0) {
+		argi++;
+		if (argi < argc) {
+			diff_level = atoi(argv[argi]);
+			if (diff_level < 1 || diff_level > 3)
+				diff_level = DIFF_NORMAL;
+			argi++;
+		}
+	}
+
+	/* Remaining args: snake_img enemy_img food_img */
+	if (argc - argi < 3) {
+		print_usage(argv[0]);
+		return -1;
+	}
+
+	char *file_snake = argv[argi];
+	char *file_enemy = argv[argi + 1];
+	char *file_food  = argv[argi + 2];
 
 	/* Get screen size and go fullscreen */
 	screen_width = glutGet(GLUT_SCREEN_WIDTH);
@@ -602,7 +755,7 @@ int main(int argc, char *argv[])
 	if (screen_height == 0) screen_height = 1080;
 
 	reset();
-	select_difficulty();
+	apply_difficulty(diff_level);
 
 	window = glutCreateWindow("Snake Bizarre");
 	glutFullScreen();
@@ -616,22 +769,16 @@ int main(int argc, char *argv[])
 	}
 	ilInit();
 
-	/* Load textures: argv[1]=snake, argv[2]=enemy, argv[3]=food */
-	if (argc < 4) {
-		printf("Usage: %s <image_snake> <image_ennemi> <image_nourriture>\n", argv[0]);
-		return -1;
-	}
-
-	img_snake = load_image(argv[1]);
+	img_snake = load_image(file_snake);
 	bind_texture(&tex_snake);
-	img_enemy = load_image(argv[2]);
+	img_enemy = load_image(file_enemy);
 	bind_texture(&tex_enemy[0]);
-	img_food = load_image(argv[3]);
+	img_food = load_image(file_food);
 	bind_texture(&tex_food[0]);
 
 	if (img_snake == -1 || img_enemy == -1 || img_food == -1) {
 		printf("Erreur de chargement des images.\n");
-		printf("Usage: %s <image_snake> <image_ennemi> <image_nourriture>\n", argv[0]);
+		print_usage(argv[0]);
 		return -1;
 	}
 
