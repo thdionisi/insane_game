@@ -5,27 +5,26 @@ Jeu de type snake en C avec OpenGL/GLUT et DevIL pour le chargement d'images.
 ## Compilation
 
 ```bash
-gcc snake_bizarre.c -o snake_bizarre -lGL -lGLU -lglut -lIL -lm
+gcc snake_bizarre.c -o snake_bizarre -lGL -lGLU -lglut -lIL -lm $(sdl2-config --cflags --libs) -lSDL2_mixer
 ```
 
 ### Dependances (Ubuntu/Debian)
 
 ```bash
-sudo apt-get install libgl-dev libglu1-mesa-dev freeglut3-dev libdevil-dev
+sudo apt-get install libgl-dev libglu1-mesa-dev freeglut3-dev libdevil-dev libsdl2-mixer-dev
 ```
 
 ## Utilisation
 
 ```bash
-./snake_bizarre [-d 1|2|3] <image_snake> <image_ennemi> <image_nourriture>
+./snake_bizarre [-d 1|2|3] [-c config.cfg]
 ```
 
-Les 3 arguments sont des fichiers image (PNG, JPG...) charges via DevIL :
-1. Image du snake (le personnage)
-2. Image de l'ennemi (les monstres)
-3. Image de la nourriture (ce que le snake doit manger)
+Le jeu lit un fichier de configuration (`snake_bizarre.cfg` par defaut) qui contient les chemins vers les images et les sons. Voir `snake_bizarre.cfg` pour le format.
 
-Au lancement, un menu dans le terminal propose 3 niveaux de difficulte (Facile, Normal, Difficile) qui ajustent la vitesse du snake et des ennemis. La fenetre s'ouvre en plein ecran.
+Images obligatoires dans le config : `snake`, `food`, `enemy_normal`.
+Images optionnelles : `enemy_midboss`, `enemy_boss` (sinon enemy_normal est utilise).
+Tous les sons sont optionnels (le jeu fonctionne sans).
 
 ### Difficulte (`-d`)
 
@@ -34,6 +33,22 @@ Au lancement, un menu dans le terminal propose 3 niveaux de difficulte (Facile, 
 - `-d 3` Difficile : ennemis rapides, la nourriture apparait moins souvent, et les ennemis peuvent la manger (ils grossissent et accelerent)
 
 La vitesse du snake est la meme dans tous les modes (4), ajustable en jeu avec `v`/`b`.
+
+### Types d'ennemis
+
+- **Normal** : petit, lent (tous les ennemis standard)
+- **Mid-boss** : moyen, vitesse intermediaire (tous les 8 ennemis)
+- **Boss** : gros, rapide (tous les 16 ennemis)
+
+Chaque type peut avoir sa propre texture via le fichier de config.
+
+### Son
+
+7 pistes de musique de fond, de plus en plus dramatiques. La musique change automatiquement tous les 5 points. Effets sonores pour : manger, game over, orbe, collision entre ennemis.
+
+Formats supportes :
+- Musique : `.ogg`, `.wav`, `.mp3`, `.flac`, `.mod`
+- Effets : `.wav`, `.ogg`
 
 ## Controles
 

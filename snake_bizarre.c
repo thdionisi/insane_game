@@ -7,13 +7,16 @@
 #include <unistd.h>
 #include <time.h>
 #include <IL/il.h>
+#include <SDL2/SDL.h>
+#include <SDL2/SDL_mixer.h>
 
 /* ========== Constants ========== */
 
 #define MAX_ENEMIES 100
 #define START_ENEMIES 1
 #define SMALL_SIZE 0.05f
-#define BIG_SIZE 0.1f
+#define MIDBOSS_SIZE 0.08f
+#define BOSS_SIZE 0.12f
 #define MAX_ENEMY_SIZE 0.25f
 
 #define DIR_UP    0
@@ -25,37 +28,70 @@
 #define DIFF_NORMAL 2
 #define DIFF_HARD   3
 
+#define ENEMY_NORMAL  0
+#define ENEMY_MIDBOSS 1
+#define ENEMY_BOSS    2
+
 #define ORB_RADIUS 20.0f
 #define ORB_PUSH_FORCE 300.0f
 #define ORB_ANIM_DURATION 40
 
+#define MAX_MUSIC 7
+#define MAX_PATH_LEN 512
+#define SCORE_PER_MUSIC 5
+
 /* ========== Types ========== */
 
 typedef struct {
-	float xleft;
-	float xright;
-	float ydown;
-	float yup;
-	float speed;
+	float xleft, xright, ydown, yup, speed;
 } Rect;
 
 typedef struct {
 	float x, y;
-	int active;
-	int timer;
+	int active, timer;
 	float pulse;
 } Orb;
 
-/* ========== Screen dimensions (set at runtime) ========== */
+typedef struct {
+	char img_snake[MAX_PATH_LEN];
+	char img_food[MAX_PATH_LEN];
+	char img_enemy_normal[MAX_PATH_LEN];
+	char img_enemy_midboss[MAX_PATH_LEN];
+	char img_enemy_boss[MAX_PATH_LEN];
+	char music[MAX_MUSIC][MAX_PATH_LEN];
+	char sfx_eat[MAX_PATH_LEN];
+	char sfx_gameover[MAX_PATH_LEN];
+	char sfx_orb[MAX_PATH_LEN];
+	char sfx_collision[MAX_PATH_LEN];
+} Config;
 
-int screen_width;
-int screen_height;
+/* ========== Screen ========== */
+
+int screen_width, screen_height;
+
+/* ========== Config ========== */
+
+Config config;
 
 /* ========== Textures ========== */
 
-GLuint tex_enemy[MAX_ENEMIES];
-GLuint tex_food[MAX_ENEMIES];
 GLuint tex_snake;
+GLuint tex_food;
+GLuint tex_enemy_normal;
+GLuint tex_enemy_midboss;
+GLuint tex_enemy_boss;
+int has_tex_midboss = 0;
+int has_tex_boss = 0;
+
+/* ========== Sound ========== */
+
+Mix_Music *music_tracks[MAX_MUSIC];
+Mix_Chunk *sfx_eat_sound = NULL;
+Mix_Chunk *sfx_gameover_sound = NULL;
+Mix_Chunk *sfx_orb_sound = NULL;
+Mix_Chunk *sfx_collision_sound = NULL;
+int current_music_tier = -1;
+int sound_initialized = 0;
 
 /* ========== Game state ========== */
 
@@ -68,20 +104,17 @@ int game_over = 0;
 int food_eaten = 0;
 int respawn_food = 1;
 int food_cycle = 0;
-int food_x = 1000;
-int food_y = 1000;
+int food_x = 1000, food_y = 1000;
 int points = 0;
 int snake_length = 1;
 int food_timer = 600;
-
-/* ========== Orb (spawns on enemy-enemy collision) ========== */
+char game_over_msg[256];
 
 Orb orb = {0, 0, 0, 0, 0.0f};
 
-/* ========== Movement / speed ========== */
+/* ========== Movement ========== */
 
-float snake_x = 0;
-float snake_y = 0;
+float snake_x = 0, snake_y = 0;
 float snake_speed = 4;
 float slow_enemy_speed = 3;
 float fast_enemy_speed = 6;
@@ -89,25 +122,20 @@ float enemy_gap;
 
 /* ========== Per-enemy arrays ========== */
 
-float enemy_dist_y[MAX_ENEMIES];
-float enemy_dist_x[MAX_ENEMIES];
-float last_dy[MAX_ENEMIES];
-float last_dx[MAX_ENEMIES];
+float enemy_dist_y[MAX_ENEMIES], enemy_dist_x[MAX_ENEMIES];
+float last_dy[MAX_ENEMIES], last_dx[MAX_ENEMIES];
 float enemy_size[MAX_ENEMIES];
 float enemy_speed[MAX_ENEMIES];
-int   enemy_dir_y[MAX_ENEMIES];
-int   enemy_dir_x[MAX_ENEMIES];
+int   enemy_dir_y[MAX_ENEMIES], enemy_dir_x[MAX_ENEMIES];
+int   enemy_type[MAX_ENEMIES];
 
 /* ========== Entity rects ========== */
 
 Rect snake[100];
 Rect enemy[MAX_ENEMIES];
-
-/* ========== Food rect (global for enemy-food collision) ========== */
-
 Rect food_rect;
 
-/* ========== Utility functions ========== */
+/* ========== Utility ========== */
 
 double rand_range(double a, double b)
 {
@@ -121,6 +149,145 @@ void bitmap_text(int x, int y, char *string, void *font)
 	len = (int)strlen(string);
 	for (i = 0; i < len; i++)
 		glutBitmapCharacter(font, string[i]);
+}
+
+static char *strip(char *s)
+{
+	while (*s == ' ' || *s == '\t') s++;
+	char *end = s + strlen(s) - 1;
+	while (end > s && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r'))
+		*end-- = '\0';
+	return s;
+}
+
+/* ========== Config parsing ========== */
+
+static int load_config(const char *path)
+{
+	FILE *f = fopen(path, "r");
+	if (!f) return -1;
+
+	char line[1024];
+	memset(&config, 0, sizeof(Config));
+
+	while (fgets(line, sizeof(line), f)) {
+		char *s = strip(line);
+		if (*s == '#' || *s == '[' || *s == '\0')
+			continue;
+
+		char *eq = strchr(s, '=');
+		if (!eq) continue;
+
+		*eq = '\0';
+		char *key = strip(s);
+		char *val = strip(eq + 1);
+
+		if (strcmp(key, "snake") == 0)
+			strncpy(config.img_snake, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "food") == 0)
+			strncpy(config.img_food, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "enemy_normal") == 0)
+			strncpy(config.img_enemy_normal, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "enemy_midboss") == 0)
+			strncpy(config.img_enemy_midboss, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "enemy_boss") == 0)
+			strncpy(config.img_enemy_boss, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "music_1") == 0)
+			strncpy(config.music[0], val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "music_2") == 0)
+			strncpy(config.music[1], val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "music_3") == 0)
+			strncpy(config.music[2], val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "music_4") == 0)
+			strncpy(config.music[3], val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "music_5") == 0)
+			strncpy(config.music[4], val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "music_6") == 0)
+			strncpy(config.music[5], val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "music_7") == 0)
+			strncpy(config.music[6], val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "sfx_eat") == 0)
+			strncpy(config.sfx_eat, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "sfx_gameover") == 0)
+			strncpy(config.sfx_gameover, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "sfx_orb") == 0)
+			strncpy(config.sfx_orb, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "sfx_collision") == 0)
+			strncpy(config.sfx_collision, val, MAX_PATH_LEN - 1);
+	}
+
+	fclose(f);
+	return 0;
+}
+
+/* ========== Sound ========== */
+
+static void play_sfx(Mix_Chunk *sfx)
+{
+	if (sound_initialized && sfx)
+		Mix_PlayChannel(-1, sfx, 0);
+}
+
+static void update_music(void)
+{
+	if (!sound_initialized) return;
+
+	int tier = points / SCORE_PER_MUSIC;
+	if (tier >= MAX_MUSIC) tier = MAX_MUSIC - 1;
+
+	if (tier != current_music_tier && music_tracks[tier]) {
+		Mix_FadeInMusic(music_tracks[tier], -1, 1000);
+		current_music_tier = tier;
+	}
+}
+
+static void init_sound(void)
+{
+	int i;
+
+	if (SDL_Init(SDL_INIT_AUDIO) < 0) {
+		fprintf(stderr, "SDL audio: %s\n", SDL_GetError());
+		return;
+	}
+	if (Mix_OpenAudio(44100, MIX_DEFAULT_FORMAT, 2, 2048) < 0) {
+		fprintf(stderr, "SDL_mixer: %s\n", Mix_GetError());
+		return;
+	}
+	sound_initialized = 1;
+
+	for (i = 0; i < MAX_MUSIC; i++) {
+		if (config.music[i][0])
+			music_tracks[i] = Mix_LoadMUS(config.music[i]);
+	}
+
+	if (config.sfx_eat[0])
+		sfx_eat_sound = Mix_LoadWAV(config.sfx_eat);
+	if (config.sfx_gameover[0])
+		sfx_gameover_sound = Mix_LoadWAV(config.sfx_gameover);
+	if (config.sfx_orb[0])
+		sfx_orb_sound = Mix_LoadWAV(config.sfx_orb);
+	if (config.sfx_collision[0]) {
+		sfx_collision_sound = Mix_LoadWAV(config.sfx_collision);
+		if (sfx_collision_sound)
+			Mix_VolumeChunk(sfx_collision_sound, MIX_MAX_VOLUME / 4);
+	}
+}
+
+static void cleanup_sound(void)
+{
+	int i;
+	if (!sound_initialized) return;
+
+	Mix_HaltMusic();
+	for (i = 0; i < MAX_MUSIC; i++)
+		if (music_tracks[i]) Mix_FreeMusic(music_tracks[i]);
+	if (sfx_eat_sound) Mix_FreeChunk(sfx_eat_sound);
+	if (sfx_gameover_sound) Mix_FreeChunk(sfx_gameover_sound);
+	if (sfx_orb_sound) Mix_FreeChunk(sfx_orb_sound);
+	if (sfx_collision_sound) Mix_FreeChunk(sfx_collision_sound);
+
+	Mix_CloseAudio();
+	SDL_Quit();
 }
 
 /* ========== Texture loading ========== */
@@ -155,6 +322,18 @@ int load_image(char *filename)
 	return image;
 }
 
+static int load_and_bind(char *path, GLuint *tex)
+{
+	if (!path[0]) return 0;
+	int img = load_image(path);
+	if (img == -1) {
+		fprintf(stderr, "Impossible de charger: %s\n", path);
+		return -1;
+	}
+	bind_texture(tex);
+	return 1;
+}
+
 /* ========== Collision ========== */
 
 int collision(Rect a, Rect b)
@@ -173,22 +352,14 @@ float rect_distance(Rect a, Rect b)
 	return sqrtf(dx * dx + dy * dy);
 }
 
-static float rect_center_x(Rect r)
-{
-	return (r.xleft + r.xright) / 2.0f;
-}
+static float rect_cx(Rect r) { return (r.xleft + r.xright) / 2.0f; }
+static float rect_cy(Rect r) { return (r.ydown + r.yup) / 2.0f; }
 
-static float rect_center_y(Rect r)
-{
-	return (r.ydown + r.yup) / 2.0f;
-}
-
-/* ========== Orb management ========== */
+/* ========== Orb ========== */
 
 static void spawn_orb(void)
 {
-	float W = screen_width;
-	float H = screen_height;
+	float W = screen_width, H = screen_height;
 	orb.x = rand_range(-W / 2 + 50, W / 2 - 50);
 	orb.y = rand_range(-H / 2 + 50, H / 2 - 50);
 	orb.active = 1;
@@ -198,65 +369,73 @@ static void spawn_orb(void)
 
 static int point_in_orb(float px, float py)
 {
-	float dx = px - orb.x;
-	float dy = py - orb.y;
-	return (dx * dx + dy * dy) < (ORB_RADIUS * 2) * (ORB_RADIUS * 2);
+	float dx = px - orb.x, dy = py - orb.y;
+	float r2 = (ORB_RADIUS * 2) * (ORB_RADIUS * 2);
+	return (dx * dx + dy * dy) < r2;
 }
 
-static void push_away_from_orb(float *obj_x, float *obj_y)
+static void push_from_orb(float *ox, float *oy)
 {
-	float dx = *obj_x - orb.x;
-	float dy = *obj_y - orb.y;
+	float dx = *ox - orb.x, dy = *oy - orb.y;
 	float len = sqrtf(dx * dx + dy * dy);
 	if (len < 1.0f) len = 1.0f;
-	*obj_x += (dx / len) * ORB_PUSH_FORCE;
-	*obj_y += (dy / len) * ORB_PUSH_FORCE;
+	*ox += (dx / len) * ORB_PUSH_FORCE;
+	*oy += (dy / len) * ORB_PUSH_FORCE;
 }
 
 static void draw_orb(void)
 {
-	if (!orb.active)
-		return;
+	if (!orb.active) return;
 
 	float scale = 1.0f + 0.3f * sinf(orb.pulse);
 	float r = ORB_RADIUS * scale;
-	int segments = 24;
-	int k;
-
-	/* Glow ring */
 	float alpha = (float)orb.timer / ORB_ANIM_DURATION;
+	int k, seg = 24;
+
 	glColor4f(0.8f, 0.2f, 1.0f, alpha * 0.3f);
 	glBegin(GL_TRIANGLE_FAN);
 	glVertex2f(orb.x, orb.y);
-	for (k = 0; k <= segments; k++) {
-		float angle = 2.0f * M_PI * k / segments;
-		glVertex2f(orb.x + cosf(angle) * r * 1.8f,
-		           orb.y + sinf(angle) * r * 1.8f);
+	for (k = 0; k <= seg; k++) {
+		float a = 2.0f * M_PI * k / seg;
+		glVertex2f(orb.x + cosf(a) * r * 1.8f, orb.y + sinf(a) * r * 1.8f);
 	}
 	glEnd();
 
-	/* Core */
 	glColor3f(0.9f, 0.3f, 1.0f);
 	glBegin(GL_TRIANGLE_FAN);
 	glVertex2f(orb.x, orb.y);
-	for (k = 0; k <= segments; k++) {
-		float angle = 2.0f * M_PI * k / segments;
-		glVertex2f(orb.x + cosf(angle) * r,
-		           orb.y + sinf(angle) * r);
+	for (k = 0; k <= seg; k++) {
+		float a = 2.0f * M_PI * k / seg;
+		glVertex2f(orb.x + cosf(a) * r, orb.y + sinf(a) * r);
 	}
 	glEnd();
 }
 
 /* ========== Enemy management ========== */
 
-void set_enemy_size_and_speed(int i)
+static void set_enemy_type_and_stats(int i)
 {
-	if (i % 8 == 0 && i != 0) {
-		enemy_size[i] = BIG_SIZE;
-		enemy_speed[i] = fast_enemy_speed;
+	if (i > 0 && i % 16 == 0) {
+		enemy_type[i] = ENEMY_BOSS;
+		enemy_size[i] = BOSS_SIZE;
+		enemy_speed[i] = fast_enemy_speed * 1.2f;
+	} else if (i > 0 && i % 8 == 0) {
+		enemy_type[i] = ENEMY_MIDBOSS;
+		enemy_size[i] = MIDBOSS_SIZE;
+		enemy_speed[i] = (slow_enemy_speed + fast_enemy_speed) / 2.0f;
 	} else {
+		enemy_type[i] = ENEMY_NORMAL;
 		enemy_size[i] = SMALL_SIZE;
 		enemy_speed[i] = slow_enemy_speed;
+	}
+}
+
+static GLuint enemy_texture(int i)
+{
+	switch (enemy_type[i]) {
+	case ENEMY_BOSS:    return has_tex_boss ? tex_enemy_boss : tex_enemy_normal;
+	case ENEMY_MIDBOSS: return has_tex_midboss ? tex_enemy_midboss : tex_enemy_normal;
+	default:            return tex_enemy_normal;
 	}
 }
 
@@ -265,21 +444,17 @@ void add_enemy(void)
 	int i = num_enemies - 1;
 	float dist = 0;
 
-	set_enemy_size_and_speed(i);
+	set_enemy_type_and_stats(i);
 
 	while (dist < screen_width / 5) {
 		enemy_dist_y[i] = rand_range(1, screen_height);
 		enemy_dist_x[i] = rand_range(1, screen_width);
 
-		float xleft = -screen_width / 2 + enemy_dist_x[i] - enemy_size[i] * screen_height;
-		float xright = -screen_width / 2 + enemy_dist_x[i];
-		float ydown = enemy_dist_y[i] - (screen_height / 2 - enemy_size[i] * screen_height);
-		float yup = enemy_dist_y[i] - (screen_height / 2 - 2 * enemy_size[i] * screen_height);
-
-		enemy[i].xleft = xleft;
-		enemy[i].xright = xright;
-		enemy[i].ydown = ydown;
-		enemy[i].yup = yup;
+		float sz = enemy_size[i] * screen_height;
+		enemy[i].xleft = -screen_width / 2 + enemy_dist_x[i] - sz;
+		enemy[i].xright = -screen_width / 2 + enemy_dist_x[i];
+		enemy[i].ydown = enemy_dist_y[i] - (screen_height / 2 - sz);
+		enemy[i].yup = enemy_dist_y[i] - (screen_height / 2 - 2 * sz);
 		dist = rect_distance(enemy[i], snake[0]);
 	}
 
@@ -289,21 +464,41 @@ void add_enemy(void)
 
 static void enemy_eat_food(int i)
 {
-	/* Enemy grows a bit (capped) */
 	if (enemy_size[i] < MAX_ENEMY_SIZE)
 		enemy_size[i] *= 1.15f;
-	/* Enemy gets faster */
 	enemy_speed[i] *= 1.1f;
-	/* Force food respawn */
 	respawn_food = 1;
 }
 
-/* ========== Reset ========== */
+/* ========== Game control ========== */
+
+static void apply_difficulty(int level)
+{
+	difficulty = level;
+	switch (level) {
+	case DIFF_EASY:
+		slow_enemy_speed = 2;
+		fast_enemy_speed = 4;
+		food_timer = 600;
+		break;
+	case DIFF_HARD:
+		slow_enemy_speed = 5;
+		fast_enemy_speed = 9;
+		food_timer = 1800;
+		break;
+	default:
+		difficulty = DIFF_NORMAL;
+		slow_enemy_speed = 3;
+		fast_enemy_speed = 6;
+		food_timer = 600;
+		break;
+	}
+	snake_speed = 4;
+}
 
 void reset(void)
 {
 	int i;
-
 	snake_x = 0;
 	snake_y = 0;
 	snake_speed = 4;
@@ -314,26 +509,37 @@ void reset(void)
 	snake_length = 1;
 	food_cycle = 0;
 	respawn_food = 1;
+	food_eaten = 0;
 	orb.active = 0;
+	game_over_msg[0] = '\0';
 
 	for (i = 0; i < num_enemies; i++) {
 		enemy_dist_y[i] = i * enemy_gap;
 		enemy_dist_x[i] = i * enemy_gap;
 		enemy_dir_y[i] = 1;
 		enemy_dir_x[i] = 1;
-		enemy_speed[i] = 3;
+		enemy_type[i] = ENEMY_NORMAL;
+		enemy_speed[i] = slow_enemy_speed;
 		enemy_size[i] = SMALL_SIZE;
 	}
+}
+
+static void start_game(void)
+{
+	reset();
+	apply_difficulty(difficulty);
+	current_music_tier = -1;
+	update_music();
 }
 
 /* ========== Drawing helpers ========== */
 
 static void draw_quad(float x1, float y1, float x2, float y2)
 {
-	glVertex2d(x1, y2);
-	glVertex2d(x2, y2);
-	glVertex2d(x2, y1);
-	glVertex2d(x1, y1);
+	glVertex2f(x1, y2);
+	glVertex2f(x2, y2);
+	glVertex2f(x2, y1);
+	glVertex2f(x1, y1);
 }
 
 static void draw_textured_quad(GLuint tex, float x1, float y1, float x2, float y2)
@@ -342,15 +548,34 @@ static void draw_textured_quad(GLuint tex, float x1, float y1, float x2, float y
 	glMatrixMode(GL_MODELVIEW);
 	glBindTexture(GL_TEXTURE_2D, tex);
 	glBegin(GL_QUADS);
-	glTexCoord2i(0, 0); glVertex2d(x1, y2);
-	glTexCoord2i(1, 0); glVertex2d(x2, y2);
-	glTexCoord2i(1, 1); glVertex2d(x2, y1);
-	glTexCoord2i(0, 1); glVertex2d(x1, y1);
+	glTexCoord2i(0, 0); glVertex2f(x1, y2);
+	glTexCoord2i(1, 0); glVertex2f(x2, y2);
+	glTexCoord2i(1, 1); glVertex2f(x2, y1);
+	glTexCoord2i(0, 1); glVertex2f(x1, y1);
 	glEnd();
 	glDisable(GL_TEXTURE_2D);
 }
 
-/* ========== Display callback ========== */
+static void build_game_over_msg(void)
+{
+	sprintf(game_over_msg, "%d", points);
+	if (points < 5)
+		strcat(game_over_msg, " points... C'est lamentable, affligeant, pitoyable...");
+	else if (points < 10)
+		strcat(game_over_msg, " points... Essaye la bataille ou les petits chevaux.");
+	else if (points < 15)
+		strcat(game_over_msg, " points... Essaye encore !");
+	else if (points < 20)
+		strcat(game_over_msg, " points. L'Histoire ne retiendra pas cette partie.");
+	else if (points < 25)
+		strcat(game_over_msg, " points. Pas mal, mais il en faut plus !");
+	else if (points < 30)
+		strcat(game_over_msg, " points ! Tu as un certain talent !");
+	else
+		strcat(game_over_msg, " points ! Quel talent inoui !");
+}
+
+/* ========== Display ========== */
 
 void display(void)
 {
@@ -359,31 +584,29 @@ void display(void)
 	float H = screen_height;
 	float cell = SMALL_SIZE * H;
 
-	if (paused)
+	if (paused && !game_over)
 		return;
 
 	glClearColor(0.5f, 0.0f, 0.4f, 0.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-	/* Bottom band */
+	/* Background bands */
 	glBegin(GL_QUADS);
 	glColor3f(0.75f, 0.75f, 0.15f);
 	draw_quad(-W / 2, -H / 2, W / 2, -(H / 2 - cell));
 	glEnd();
 
-	/* Middle band */
 	glBegin(GL_QUADS);
 	glColor3f(0.50f, 0.70f, 0.90f);
 	draw_quad(-W / 2, -(H / 2 - cell), W / 2, -(H / 2 - 2 * cell));
 	glEnd();
 
-	/* Top band */
 	glBegin(GL_QUADS);
 	glColor3f(0.35f, 0.15f, 0.75f);
 	draw_quad(-W / 2, -(H / 2 - 2 * cell), W / 2, -(H / 2 - 3 * cell));
 	glEnd();
 
-	/* Clamp snake position */
+	/* Clamp snake */
 	if (snake_x <= -(W - cell) / 2) snake_x = -(W - cell) / 2;
 	if (snake_x >= (W - cell) / 2)  snake_x = (W - cell) / 2;
 	if (snake_y <= 0)               snake_y = 0;
@@ -393,16 +616,14 @@ void display(void)
 	float sx2 = cell / 2 + snake_x;
 	float sy1 = -H / 2 + snake_y;
 	float sy2 = -H / 2 + cell + snake_y;
-
 	snake[0].xleft = sx1;
 	snake[0].xright = sx2;
 	snake[0].ydown = sy1;
 	snake[0].yup = sy2;
 
-	/* Draw snake */
 	draw_textured_quad(tex_snake, sx1, sy1, sx2, sy2);
 
-	/* Food position */
+	/* Food */
 	int fx, fy;
 	if (respawn_food) {
 		fx = rand_range(cell, W - cell);
@@ -425,20 +646,22 @@ void display(void)
 	food_rect.ydown = fd;
 	food_rect.yup = fu;
 
-	/* Check food collision (snake eats) */
-	if (collision(snake[0], food_rect)) {
-		snake_length++;
+	if (!game_over && collision(snake[0], food_rect))
 		food_eaten = 1;
-	}
 
-	/* Draw food */
-	draw_textured_quad(tex_food[0], fl, fd, fr, fu);
+	draw_textured_quad(tex_food, fl, fd, fr, fu);
 
-	/* Draw orb */
+	/* Orb */
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 	draw_orb();
 	glDisable(GL_BLEND);
+
+	/* Score HUD */
+	glColor3f(1.0f, 1.0f, 1.0f);
+	char score_buf[64];
+	sprintf(score_buf, "Score: %d", points);
+	bitmap_text(-W / 2 + 10, H / 2 - 25, score_buf, GLUT_BITMAP_HELVETICA_18);
 
 	/* Enemies */
 	for (i = 0; i < num_enemies; i++) {
@@ -468,32 +691,27 @@ void display(void)
 		enemy[i].ydown = ey1;
 		enemy[i].yup = ey2;
 
-		draw_textured_quad(tex_enemy[0], ex1, ey1, ex2, ey2);
+		draw_textured_quad(enemy_texture(i), ex1, ey1, ex2, ey2);
 
-		/* Enemy-enemy collision: bounce off each other based on relative positions */
+		/* Enemy-enemy collision */
 		int j;
 		for (j = 0; j < i; j++) {
 			if (!collision(enemy[j], enemy[i]))
 				continue;
 
-			float ci_x = rect_center_x(enemy[i]);
-			float ci_y = rect_center_y(enemy[i]);
-			float cj_x = rect_center_x(enemy[j]);
-			float cj_y = rect_center_y(enemy[j]);
-			float dx = ci_x - cj_x;
-			float dy = ci_y - cj_y;
+			float dx = rect_cx(enemy[i]) - rect_cx(enemy[j]);
+			float dy = rect_cy(enemy[i]) - rect_cy(enemy[j]);
 
 			if (fabsf(dx) > fabsf(dy)) {
-				/* Horizontal separation */
 				enemy_dir_x[i] = (dx > 0) ? 1 : -1;
 				enemy_dir_x[j] = (dx > 0) ? -1 : 1;
 			} else {
-				/* Vertical separation */
 				enemy_dir_y[i] = (dy > 0) ? 1 : -1;
 				enemy_dir_y[j] = (dy > 0) ? -1 : 1;
 			}
 
-			/* Spawn an orb if none active */
+			play_sfx(sfx_collision_sound);
+
 			if (!orb.active)
 				spawn_orb();
 		}
@@ -503,42 +721,46 @@ void display(void)
 			enemy_eat_food(i);
 
 		/* Enemy kills snake */
-		if (collision(enemy[i], snake[0])) {
-			char buffer[256] = {'\0'};
-			sprintf(buffer, "%d", points);
-
-			if (points < 5)
-				strcat(buffer, " points... C'est lamentable, affligeant, pitoyable...");
-			else if (points < 10)
-				strcat(buffer, " points... Tu devrais essayer la bataille ou les petits chevaux.");
-			else if (points < 15)
-				strcat(buffer, " points... Essaye encore !");
-			else if (points < 20)
-				strcat(buffer, " points. L'Histoire ne retiendra malheureusement pas cette partie.");
-			else if (points < 25)
-				strcat(buffer, " points. Pas mal, mais il en faut plus pour m'impressionner !");
-			else if (points < 30)
-				strcat(buffer, " points ! Tu as un certain talent !");
-			else
-				strcat(buffer, " points ! Quel talent inoui ! Tu deviendras un grand...");
-
-			glColor3f(0.95f, 0.0f, 0.0f);
-			bitmap_text(-250, 20, buffer, GLUT_BITMAP_TIMES_ROMAN_24);
+		if (!game_over && collision(enemy[i], snake[0])) {
+			build_game_over_msg();
 			game_over = 1;
+			if (sound_initialized) Mix_HaltMusic();
+			play_sfx(sfx_gameover_sound);
 		}
+	}
+
+	/* Game over overlay */
+	if (game_over) {
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glColor4f(0.0f, 0.0f, 0.0f, 0.6f);
+		glBegin(GL_QUADS);
+		draw_quad(-W / 2, -H / 2, W / 2, H / 2);
+		glEnd();
+		glDisable(GL_BLEND);
+
+		glColor3f(0.95f, 0.1f, 0.1f);
+		bitmap_text(-300, 40, game_over_msg, GLUT_BITMAP_TIMES_ROMAN_24);
+
+		glColor3f(1.0f, 1.0f, 1.0f);
+		bitmap_text(-180, -20, "R = Rejouer    Q = Quitter", GLUT_BITMAP_HELVETICA_18);
 	}
 
 	glutSwapBuffers();
 }
 
-/* ========== Idle callback ========== */
+/* ========== Idle ========== */
 
 void idle(void)
 {
 	int i;
 
-	if (paused)
+	if (paused) return;
+
+	if (game_over) {
+		glutPostRedisplay();
 		return;
+	}
 
 	if (food_eaten) {
 		num_enemies++;
@@ -546,6 +768,8 @@ void idle(void)
 		points++;
 		food_cycle = food_timer - 1;
 		add_enemy();
+		play_sfx(sfx_eat_sound);
+		update_music();
 	}
 
 	for (i = 0; i < num_enemies; i++) {
@@ -575,25 +799,23 @@ void idle(void)
 		respawn_food = 0;
 	}
 
-	/* Orb logic: check if snake or enemies touch it */
+	/* Orb interactions */
 	if (orb.active) {
 		orb.pulse += 0.15f;
 		orb.timer--;
 
-		/* Snake touches orb */
-		float scx = (snake[0].xleft + snake[0].xright) / 2.0f;
-		float scy = (snake[0].ydown + snake[0].yup) / 2.0f;
+		float scx = rect_cx(snake[0]), scy = rect_cy(snake[0]);
 		if (point_in_orb(scx, scy)) {
-			push_away_from_orb(&snake_x, &snake_y);
+			push_from_orb(&snake_x, &snake_y);
+			play_sfx(sfx_orb_sound);
 			orb.active = 0;
 		}
 
-		/* Enemies touch orb */
 		for (i = 0; i < num_enemies; i++) {
-			float ecx = rect_center_x(enemy[i]);
-			float ecy = rect_center_y(enemy[i]);
+			float ecx = rect_cx(enemy[i]), ecy = rect_cy(enemy[i]);
 			if (point_in_orb(ecx, ecy)) {
-				push_away_from_orb(&enemy_dist_x[i], &enemy_dist_y[i]);
+				push_from_orb(&enemy_dist_x[i], &enemy_dist_y[i]);
+				play_sfx(sfx_orb_sound);
 				orb.active = 0;
 				break;
 			}
@@ -604,21 +826,14 @@ void idle(void)
 	}
 
 	glutPostRedisplay();
-
-	if (game_over) {
-		sleep(2);
-		glFinish();
-		glutDestroyWindow(window);
-	}
 }
 
-/* ========== Reshape callback ========== */
+/* ========== Reshape ========== */
 
 void reshape(int w, int h)
 {
 	screen_width = w;
 	screen_height = h;
-
 	glViewport(0, 0, w, h);
 	glMatrixMode(GL_PROJECTION);
 	glLoadIdentity();
@@ -627,18 +842,26 @@ void reshape(int w, int h)
 	glutPostRedisplay();
 }
 
-/* ========== Keyboard callbacks ========== */
+/* ========== Keyboard ========== */
 
 void keypress(unsigned char key, int x, int y)
 {
 	(void)x; (void)y;
+
+	if (game_over) {
+		if (key == 'r' || key == 'R') start_game();
+		if (key == 'q' || key == 'Q') { cleanup_sound(); glFinish(); glutDestroyWindow(window); }
+		return;
+	}
+
 	switch (key) {
-	case 'q':
+	case 'q': case 'Q':
+		cleanup_sound();
 		glFinish();
 		glutDestroyWindow(window);
 		break;
-	case 'r':
-		reset();
+	case 'r': case 'R':
+		start_game();
 		break;
 	case 'v':
 		snake_speed *= 1.3f;
@@ -655,6 +878,8 @@ void keypress(unsigned char key, int x, int y)
 void special_keys(int key, int x, int y)
 {
 	(void)x; (void)y;
+	if (game_over) return;
+
 	int i;
 	switch (key) {
 	case GLUT_KEY_UP:    direction = DIR_UP;    break;
@@ -665,41 +890,13 @@ void special_keys(int key, int x, int y)
 		slow_enemy_speed *= 1.3f;
 		fast_enemy_speed *= 1.3f;
 		for (i = 0; i < num_enemies; i++)
-			set_enemy_size_and_speed(i);
+			set_enemy_type_and_stats(i);
 		break;
 	case GLUT_KEY_F2:
 		slow_enemy_speed /= 1.3f;
 		fast_enemy_speed /= 1.3f;
 		for (i = 0; i < num_enemies; i++)
-			set_enemy_size_and_speed(i);
-		break;
-	}
-}
-
-/* ========== Difficulty setup ========== */
-
-static void apply_difficulty(int level)
-{
-	difficulty = level;
-	switch (level) {
-	case DIFF_EASY:
-		snake_speed = 4;
-		slow_enemy_speed = 2;
-		fast_enemy_speed = 4;
-		food_timer = 600;
-		break;
-	case DIFF_HARD:
-		snake_speed = 4;
-		slow_enemy_speed = 5;
-		fast_enemy_speed = 9;
-		food_timer = 1800;
-		break;
-	default:
-		difficulty = DIFF_NORMAL;
-		snake_speed = 4;
-		slow_enemy_speed = 3;
-		fast_enemy_speed = 6;
-		food_timer = 600;
+			set_enemy_type_and_stats(i);
 		break;
 	}
 }
@@ -708,47 +905,53 @@ static void apply_difficulty(int level)
 
 static void print_usage(const char *prog)
 {
-	printf("Usage: %s [-d 1|2|3] <image_snake> <image_ennemi> <image_nourriture>\n", prog);
-	printf("  -d 1  Facile   (ennemis lents)\n");
-	printf("  -d 2  Normal   (defaut)\n");
+	printf("Usage: %s [-d 1|2|3] [-c config.cfg]\n\n", prog);
+	printf("  -d 1  Facile    (ennemis lents)\n");
+	printf("  -d 2  Normal    (defaut)\n");
 	printf("  -d 3  Difficile (ennemis rapides, mangent la nourriture)\n");
+	printf("  -c    Fichier de configuration (defaut: snake_bizarre.cfg)\n");
 }
 
 /* ========== Main ========== */
 
 int main(int argc, char *argv[])
 {
-	int img_snake, img_enemy, img_food;
 	int diff_level = DIFF_NORMAL;
+	const char *config_path = "snake_bizarre.cfg";
 
 	srand(time(NULL));
-
 	glutInit(&argc, argv);
 	glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE);
 
-	/* Parse -d flag (getopt-style, manual for portability) */
+	/* Parse CLI flags */
 	int argi = 1;
-	if (argi < argc && strcmp(argv[argi], "-d") == 0) {
-		argi++;
-		if (argi < argc) {
-			diff_level = atoi(argv[argi]);
-			if (diff_level < 1 || diff_level > 3)
-				diff_level = DIFF_NORMAL;
-			argi++;
+	while (argi < argc) {
+		if (strcmp(argv[argi], "-d") == 0 && argi + 1 < argc) {
+			diff_level = atoi(argv[++argi]);
+			if (diff_level < 1 || diff_level > 3) diff_level = DIFF_NORMAL;
+		} else if (strcmp(argv[argi], "-c") == 0 && argi + 1 < argc) {
+			config_path = argv[++argi];
+		} else if (strcmp(argv[argi], "-h") == 0 || strcmp(argv[argi], "--help") == 0) {
+			print_usage(argv[0]);
+			return 0;
 		}
+		argi++;
 	}
 
-	/* Remaining args: snake_img enemy_img food_img */
-	if (argc - argi < 3) {
+	/* Load config */
+	if (load_config(config_path) != 0) {
+		fprintf(stderr, "Impossible de lire le fichier de config: %s\n", config_path);
 		print_usage(argv[0]);
 		return -1;
 	}
 
-	char *file_snake = argv[argi];
-	char *file_enemy = argv[argi + 1];
-	char *file_food  = argv[argi + 2];
+	/* Verify required images */
+	if (!config.img_snake[0] || !config.img_food[0] || !config.img_enemy_normal[0]) {
+		fprintf(stderr, "Le fichier de config doit contenir au minimum: snake, food, enemy_normal\n");
+		return -1;
+	}
 
-	/* Get screen size and go fullscreen */
+	/* Screen */
 	screen_width = glutGet(GLUT_SCREEN_WIDTH);
 	screen_height = glutGet(GLUT_SCREEN_HEIGHT);
 	if (screen_width == 0) screen_width = 1920;
@@ -759,28 +962,32 @@ int main(int argc, char *argv[])
 
 	window = glutCreateWindow("Snake Bizarre");
 	glutFullScreen();
-
 	glutDisplayFunc(display);
 	glutReshapeFunc(reshape);
 
+	/* DevIL */
 	if (ilGetInteger(IL_VERSION_NUM) < IL_VERSION) {
-		printf("Wrong DevIL version\n");
+		fprintf(stderr, "Wrong DevIL version\n");
 		return -1;
 	}
 	ilInit();
 
-	img_snake = load_image(file_snake);
-	bind_texture(&tex_snake);
-	img_enemy = load_image(file_enemy);
-	bind_texture(&tex_enemy[0]);
-	img_food = load_image(file_food);
-	bind_texture(&tex_food[0]);
+	/* Load textures */
+	if (load_and_bind(config.img_snake, &tex_snake) < 0) return -1;
+	if (load_and_bind(config.img_food, &tex_food) < 0) return -1;
+	if (load_and_bind(config.img_enemy_normal, &tex_enemy_normal) < 0) return -1;
 
-	if (img_snake == -1 || img_enemy == -1 || img_food == -1) {
-		printf("Erreur de chargement des images.\n");
-		print_usage(argv[0]);
-		return -1;
-	}
+	if (config.img_enemy_midboss[0])
+		has_tex_midboss = (load_and_bind(config.img_enemy_midboss, &tex_enemy_midboss) > 0);
+	if (config.img_enemy_boss[0])
+		has_tex_boss = (load_and_bind(config.img_enemy_boss, &tex_enemy_boss) > 0);
+
+	/* Sound */
+	init_sound();
+	current_music_tier = -1;
+	update_music();
+
+	atexit(cleanup_sound);
 
 	glutIdleFunc(idle);
 	glutKeyboardFunc(keypress);
