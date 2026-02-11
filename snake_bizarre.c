@@ -32,13 +32,13 @@
 #define ENEMY_MIDBOSS 1
 #define ENEMY_BOSS    2
 
-#define ORB_RADIUS 20.0f
+#define ORB_RADIUS 30.0f
 #define ORB_PUSH_FORCE 300.0f
 #define ORB_ANIM_DURATION 400
 
 #define MAX_MUSIC 7
 #define MAX_PATH_LEN 512
-#define SCORE_PER_MUSIC 5
+#define SCORE_PER_MUSIC 11
 
 /* ========== Types ========== */
 
@@ -215,7 +215,6 @@ static int load_config(const char *path)
 		else if (strcmp(key, "sfx_collision") == 0)
 			strncpy(config.sfx_collision, val, MAX_PATH_LEN - 1);
 	}
-
 	fclose(f);
 	return 0;
 }
@@ -262,6 +261,8 @@ static void init_sound(void)
 
 	if (config.sfx_eat[0])
 		sfx_eat_sound = Mix_LoadWAV(config.sfx_eat);
+		if (sfx_eat_sound)
+			Mix_VolumeChunk(sfx_eat_sound, MIX_MAX_VOLUME / 4);
 	if (config.sfx_gameover[0])
 		sfx_gameover_sound = Mix_LoadWAV(config.sfx_gameover);
 	if (config.sfx_orb[0])
@@ -415,11 +416,11 @@ static void draw_orb(void)
 
 static void set_enemy_type_and_stats(int i)
 {
-	if (i > 0 && i % 16 == 0) {
+	if (i > 0 && i % 10 == 0) {
 		enemy_type[i] = ENEMY_BOSS;
 		enemy_size[i] = BOSS_SIZE;
 		enemy_speed[i] = fast_enemy_speed * 1.2f;
-	} else if (i > 0 && i % 8 == 0) {
+	} else if (i > 0 && i % 4 == 0) {
 		enemy_type[i] = ENEMY_MIDBOSS;
 		enemy_size[i] = MIDBOSS_SIZE;
 		enemy_speed[i] = (slow_enemy_speed + fast_enemy_speed) / 2.0f;
@@ -476,30 +477,6 @@ static void enemy_eat_food(int i)
 
 /* ========== Game control ========== */
 
-static void apply_difficulty(int level)
-{
-	difficulty = level;
-	switch (level) {
-	case DIFF_EASY:
-		slow_enemy_speed = 2;
-		fast_enemy_speed = 4;
-		food_timer = 600;
-		break;
-	case DIFF_HARD:
-		slow_enemy_speed = 5;
-		fast_enemy_speed = 9;
-		food_timer = 1800;
-		break;
-	default:
-		difficulty = DIFF_NORMAL;
-		slow_enemy_speed = 3;
-		fast_enemy_speed = 6;
-		food_timer = 600;
-		break;
-	}
-	snake_speed = 4;
-}
-
 void reset(void)
 {
 	int i;
@@ -528,6 +505,32 @@ void reset(void)
 	}
 }
 
+
+/* ========== Difficulty setup ========== */
+
+static void apply_difficulty(int level)
+{
+	difficulty = level;
+	switch (level) {
+	case DIFF_EASY:
+		slow_enemy_speed = 1.5;
+		fast_enemy_speed = 3;
+		food_timer = 600;
+		break;
+	case DIFF_HARD:
+		slow_enemy_speed = 2;
+		fast_enemy_speed = 4;
+		food_timer = 1800;
+		break;
+	default:
+		difficulty = DIFF_NORMAL;
+		slow_enemy_speed = 1.5;
+		fast_enemy_speed = 3;
+		food_timer = 1800;
+		break;
+	}
+  snake_speed = 4;
+}
 static void start_game(void)
 {
 	reset();
@@ -566,17 +569,17 @@ static void build_game_over_msg(void)
 	if (points < 5)
 		strcat(game_over_msg, " points... C'est lamentable, affligeant, pitoyable...");
 	else if (points < 10)
-		strcat(game_over_msg, " points... Essaye la bataille ou les petits chevaux.");
+		strcat(game_over_msg, " points... Essaie la bataille ou les petits chevaux.");
 	else if (points < 15)
-		strcat(game_over_msg, " points... Essaye encore !");
+		strcat(game_over_msg, " points... Bof bof !");
 	else if (points < 20)
 		strcat(game_over_msg, " points. L'Histoire ne retiendra pas cette partie.");
 	else if (points < 25)
-		strcat(game_over_msg, " points. Pas mal, mais il en faut plus !");
+		strcat(game_over_msg, " points. Pas mal, c'est correct.");
 	else if (points < 30)
 		strcat(game_over_msg, " points ! Tu as un certain talent !");
 	else
-		strcat(game_over_msg, " points ! Quel talent inoui !");
+		strcat(game_over_msg, " points ! Du jamais vu ! Tu deviendras un grand de ce monde...");
 }
 
 /* ========== Display ========== */
@@ -714,7 +717,6 @@ void display(void)
 				enemy_dir_y[j] = (dy > 0) ? -1 : 1;
 			}
 
-			play_sfx(sfx_collision_sound);
 
 			if (!orb.active)
 				spawn_orb();
@@ -728,6 +730,7 @@ void display(void)
 		if (!game_over && collision(enemy[i], snake[0])) {
 			build_game_over_msg();
 			game_over = 1;
+			play_sfx(sfx_collision_sound);
 			if (sound_initialized) Mix_HaltMusic();
 			play_sfx(sfx_gameover_sound);
 		}
@@ -819,7 +822,7 @@ void idle(void)
 			float ecx = rect_cx(enemy[i]), ecy = rect_cy(enemy[i]);
 			if (point_in_orb(ecx, ecy)) {
 				push_from_orb(&enemy_dist_x[i], &enemy_dist_y[i]);
-				play_sfx(sfx_orb_sound);
+				//play_sfx(sfx_orb_sound);
 				orb.active = 0;
 				break;
 			}
@@ -905,43 +908,15 @@ void special_keys(int key, int x, int y)
 	}
 }
 
-/* ========== Difficulty setup ========== */
-
-static void apply_difficulty(int level)
-{
-	difficulty = level;
-	switch (level) {
-	case DIFF_EASY:
-		snake_speed = 4;
-		slow_enemy_speed = 1.5;
-		fast_enemy_speed = 3;
-		food_timer = 600;
-		break;
-	case DIFF_HARD:
-		snake_speed = 4;
-		slow_enemy_speed = 2;
-		fast_enemy_speed = 4;
-		food_timer = 1800;
-		break;
-	default:
-		difficulty = DIFF_NORMAL;
-		snake_speed = 4;
-		slow_enemy_speed = 1.5;
-		fast_enemy_speed = 3;
-		food_timer = 1800;
->>>>>>> 13d195c (Small value changes)
-		break;
-	}
-}
 
 /* ========== Usage ========== */
 
 static void print_usage(const char *prog)
 {
 	printf("Usage: %s [-d 1|2|3] [-c config.cfg]\n\n", prog);
-	printf("  -d 1  Facile    (ennemis lents)\n");
+	printf("  -d 1  Facile    (ennemis lents, ne mangent pas la nourriture)\n");
 	printf("  -d 2  Normal    (defaut)\n");
-	printf("  -d 3  Difficile (ennemis rapides, mangent la nourriture)\n");
+	printf("  -d 3  Difficile (ennemis plus rapides)\n");
 	printf("  -c    Fichier de configuration (defaut: snake_bizarre.cfg)\n");
 }
 
