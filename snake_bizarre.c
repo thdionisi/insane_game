@@ -34,7 +34,7 @@
 
 #define ORB_RADIUS 20.0f
 #define ORB_PUSH_FORCE 300.0f
-#define ORB_ANIM_DURATION 40
+#define ORB_ANIM_DURATION 400
 
 #define MAX_MUSIC 7
 #define MAX_PATH_LEN 512
@@ -466,7 +466,11 @@ static void enemy_eat_food(int i)
 {
 	if (enemy_size[i] < MAX_ENEMY_SIZE)
 		enemy_size[i] *= 1.15f;
-	enemy_speed[i] *= 1.1f;
+	/* Enemy gets faster */
+  if(difficulty==DIFF_HARD)
+    enemy_speed[i] *= 1.1f;
+	/* Force food respawn */
+  food_cycle = food_timer - 1;
 	respawn_food = 1;
 }
 
@@ -717,7 +721,7 @@ void display(void)
 		}
 
 		/* Hard mode: enemy eats food */
-		if (difficulty == DIFF_HARD && collision(enemy[i], food_rect))
+		if (difficulty != DIFF_EASY && collision(enemy[i], food_rect))
 			enemy_eat_food(i);
 
 		/* Enemy kills snake */
@@ -897,6 +901,35 @@ void special_keys(int key, int x, int y)
 		fast_enemy_speed /= 1.3f;
 		for (i = 0; i < num_enemies; i++)
 			set_enemy_type_and_stats(i);
+		break;
+	}
+}
+
+/* ========== Difficulty setup ========== */
+
+static void apply_difficulty(int level)
+{
+	difficulty = level;
+	switch (level) {
+	case DIFF_EASY:
+		snake_speed = 4;
+		slow_enemy_speed = 1.5;
+		fast_enemy_speed = 3;
+		food_timer = 600;
+		break;
+	case DIFF_HARD:
+		snake_speed = 4;
+		slow_enemy_speed = 2;
+		fast_enemy_speed = 4;
+		food_timer = 1800;
+		break;
+	default:
+		difficulty = DIFF_NORMAL;
+		snake_speed = 4;
+		slow_enemy_speed = 1.5;
+		fast_enemy_speed = 3;
+		food_timer = 1800;
+>>>>>>> 13d195c (Small value changes)
 		break;
 	}
 }
