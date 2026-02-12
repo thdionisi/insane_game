@@ -53,9 +53,15 @@
 #define POWERUP_BLACKHOLE 2
 #define SHIELD_DURATION_MS    3000
 #define BLACKHOLE_DURATION_MS 10000
-#define BLACKHOLE_RADIUS 200.0f
+#define BLACKHOLE_PLACE_RADIUS 120.0f
+#define BLACKHOLE_KILL_RADIUS 50.0f
 #define SHIELD_RADIUS 60.0f
-#define POWERUP_SPAWN_CHANCE 10
+#define SHIELD_DAMAGE 0.85f
+#define POWERUP_SPAWN_SCORE 3
+#define POWERUP_SPAWN_CHANCE 40
+
+#define MAX_DEATH_ANIMS 20
+#define DEATH_ANIM_FRAMES 40
 
 /* ========== Types ========== */
 
@@ -70,12 +76,19 @@ typedef struct {
 } Orb;
 
 typedef struct {
+	float x, y, size, alpha;
+	int active, frame;
+	int tex_idx;
+} DeathAnim;
+
+typedef struct {
 	char img_snake[MAX_PATH_LEN];
 	char img_food[MAX_PATH_LEN];
 	char img_enemy_normal[MAX_PATH_LEN];
 	char img_enemy_midboss[MAX_PATH_LEN];
 	char img_enemy_boss[MAX_PATH_LEN];
 	char img_powerup[MAX_PATH_LEN];
+	char img_blackhole[MAX_PATH_LEN];
 	char music[MAX_MUSIC][MAX_PATH_LEN];
 	char sfx_eat[MAX_PATH_LEN];
 	char sfx_gameover[MAX_PATH_LEN];
@@ -102,9 +115,11 @@ GLuint tex_enemy_normal;
 GLuint tex_enemy_midboss;
 GLuint tex_enemy_boss;
 GLuint tex_powerup;
+GLuint tex_blackhole;
 int has_tex_midboss = 0;
 int has_tex_boss = 0;
 int has_tex_powerup = 0;
+int has_tex_blackhole = 0;
 
 /* ========== Sound ========== */
 
@@ -116,6 +131,7 @@ Mix_Chunk *sfx_collision_sound = NULL;
 Mix_Chunk *sfx_powerup_sound = NULL;
 Mix_Chunk *sfx_shield_sound = NULL;
 Mix_Chunk *sfx_blackhole_sound = NULL;
+Mix_Chunk *sfx_eat_beep = NULL;
 int current_music_tier = -1;
 int sound_initialized = 0;
 
@@ -141,11 +157,23 @@ Orb orb = {0, 0, 0, 0, 0.0f};
 /* ========== Power-up state ========== */
 
 int powerup_on_map = 0;
+int powerup_map_type = POWERUP_NONE;
 float powerup_x, powerup_y;
 float powerup_pulse = 0.0f;
 int powerup_stored = POWERUP_NONE;
 int powerup_effect = POWERUP_NONE;
 int powerup_start_ms = 0;
+
+/* ========== Placed black hole ========== */
+
+int blackhole_placed = 0;
+float blackhole_x, blackhole_y;
+int blackhole_start_ms = 0;
+float blackhole_anim = 0;
+
+/* ========== Death animations ========== */
+
+DeathAnim death_anims[MAX_DEATH_ANIMS];
 
 /* ========== Movement ========== */
 
@@ -165,6 +193,7 @@ float snake_boost_dx = 0, snake_boost_dy = 0;
 float enemy_dist_y[MAX_ENEMIES], enemy_dist_x[MAX_ENEMIES];
 float last_dy[MAX_ENEMIES], last_dx[MAX_ENEMIES];
 float enemy_size[MAX_ENEMIES];
+float enemy_visual_size[MAX_ENEMIES];
 float enemy_speed[MAX_ENEMIES];
 int   enemy_dir_y[MAX_ENEMIES], enemy_dir_x[MAX_ENEMIES];
 int   enemy_type[MAX_ENEMIES];
@@ -237,6 +266,8 @@ static int load_config(const char *path)
 			strncpy(config.img_enemy_boss, val, MAX_PATH_LEN - 1);
 		else if (strcmp(key, "powerup") == 0)
 			strncpy(config.img_powerup, val, MAX_PATH_LEN - 1);
+		else if (strcmp(key, "blackhole") == 0)
+			strncpy(config.img_blackhole, val, MAX_PATH_LEN - 1);
 		else if (strcmp(key, "music_1") == 0)
 			strncpy(config.music[0], val, MAX_PATH_LEN - 1);
 		else if (strcmp(key, "music_2") == 0)
@@ -291,6 +322,51 @@ static void update_music(void)
 	}
 }
 
+static Mix_Chunk *generate_eat_beep(void)
+{
+	int sr = 44100;
+	int ms = 60;
+	int samples = sr * ms / 1000;
+	int data_size = samples * 2 * 2;
+	int total = 44 + data_size;
+	Uint8 *wav = calloc(total, 1);
+	Sint16 *d;
+	SDL_RWops *rw;
+	Mix_Chunk *chunk;
+	int i;
+
+	if (!wav) return NULL;
+
+	memcpy(wav, "RIFF", 4);
+	*(Uint32 *)(wav + 4) = total - 8;
+	memcpy(wav + 8, "WAVEfmt ", 8);
+	*(Uint32 *)(wav + 16) = 16;
+	*(Uint16 *)(wav + 20) = 1;
+	*(Uint16 *)(wav + 22) = 2;
+	*(Uint32 *)(wav + 24) = sr;
+	*(Uint32 *)(wav + 28) = sr * 4;
+	*(Uint16 *)(wav + 32) = 4;
+	*(Uint16 *)(wav + 34) = 16;
+	memcpy(wav + 36, "data", 4);
+	*(Uint32 *)(wav + 40) = data_size;
+
+	d = (Sint16 *)(wav + 44);
+	for (i = 0; i < samples; i++) {
+		float t = (float)i / sr;
+		float env = expf(-t * 50.0f);
+		float w = sinf(2.0f * M_PI * 880.0f * t)
+			+ 0.5f * sinf(2.0f * M_PI * 1320.0f * t);
+		Sint16 s = (Sint16)(w * env * 10000.0f);
+		d[i * 2] = s;
+		d[i * 2 + 1] = s;
+	}
+
+	rw = SDL_RWFromMem(wav, total);
+	chunk = Mix_LoadWAV_RW(rw, 1);
+	free(wav);
+	return chunk;
+}
+
 static void init_sound(void)
 {
 	int i;
@@ -331,6 +407,10 @@ static void init_sound(void)
 		sfx_shield_sound = Mix_LoadWAV(config.sfx_shield);
 	if (config.sfx_blackhole[0])
 		sfx_blackhole_sound = Mix_LoadWAV(config.sfx_blackhole);
+
+	sfx_eat_beep = generate_eat_beep();
+	if (sfx_eat_beep)
+		Mix_VolumeChunk(sfx_eat_beep, MIX_MAX_VOLUME / 3);
 }
 
 static void cleanup_sound(void)
@@ -345,6 +425,7 @@ static void cleanup_sound(void)
 		if (music_tracks[i]) { Mix_FreeMusic(music_tracks[i]); music_tracks[i] = NULL; }
 	}
 	if (sfx_eat_sound) { Mix_FreeChunk(sfx_eat_sound); sfx_eat_sound = NULL; }
+	if (sfx_eat_beep) { Mix_FreeChunk(sfx_eat_beep); sfx_eat_beep = NULL; }
 	if (sfx_gameover_sound) { Mix_FreeChunk(sfx_gameover_sound); sfx_gameover_sound = NULL; }
 	if (sfx_orb_sound) { Mix_FreeChunk(sfx_orb_sound); sfx_orb_sound = NULL; }
 	if (sfx_collision_sound) { Mix_FreeChunk(sfx_collision_sound); sfx_collision_sound = NULL; }
@@ -457,6 +538,64 @@ static void draw_circle(float cx, float cy, float r, int segments)
 	glEnd();
 }
 
+/* ========== Death animations ========== */
+
+static void spawn_death_anim(float x, float y, float size, int type)
+{
+	int i;
+	for (i = 0; i < MAX_DEATH_ANIMS; i++) {
+		if (!death_anims[i].active) {
+			death_anims[i].x = x;
+			death_anims[i].y = y;
+			death_anims[i].size = size;
+			death_anims[i].alpha = 1.0f;
+			death_anims[i].frame = 0;
+			death_anims[i].active = 1;
+			death_anims[i].tex_idx = type;
+			return;
+		}
+	}
+}
+
+static void update_death_anims(void)
+{
+	int i;
+	for (i = 0; i < MAX_DEATH_ANIMS; i++) {
+		if (!death_anims[i].active) continue;
+		death_anims[i].frame++;
+		float t = (float)death_anims[i].frame / DEATH_ANIM_FRAMES;
+		death_anims[i].alpha = 1.0f - t;
+		death_anims[i].size *= 0.93f;
+		if (death_anims[i].frame >= DEATH_ANIM_FRAMES)
+			death_anims[i].active = 0;
+	}
+}
+
+static void draw_death_anims(void)
+{
+	int i;
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	for (i = 0; i < MAX_DEATH_ANIMS; i++) {
+		if (!death_anims[i].active) continue;
+		float x = death_anims[i].x, y = death_anims[i].y;
+		float sz = death_anims[i].size;
+		float a = death_anims[i].alpha;
+		float flash = (death_anims[i].frame < 8) ?
+			1.0f - (float)death_anims[i].frame / 8.0f : 0.0f;
+
+		/* White flash */
+		if (flash > 0) {
+			glColor4f(1.0f, 1.0f, 1.0f, flash * 0.8f);
+			draw_circle(x, y, sz * 3.0f, 16);
+		}
+		/* Shrinking red circle */
+		glColor4f(1.0f, 0.2f, 0.1f, a * 0.7f);
+		draw_circle(x, y, sz, 16);
+	}
+	glDisable(GL_BLEND);
+}
+
 /* ========== Orb ========== */
 
 static void spawn_orb(void)
@@ -505,47 +644,122 @@ static void draw_orb(void)
 
 /* ========== Power-up drawing ========== */
 
-static void spawn_powerup(void)
+static void spawn_powerup(int type)
 {
 	float W = screen_width, H = screen_height;
 	powerup_x = rand_range(-W / 2 + 80, W / 2 - 80);
 	powerup_y = rand_range(-H / 2 + 80, H / 2 - 80);
 	powerup_on_map = 1;
+	powerup_map_type = type;
 	powerup_pulse = 0.0f;
 }
 
 static void draw_powerup_pickup(void)
 {
+	int k, seg = 20;
+	float pulse, sz;
+
 	if (!powerup_on_map) return;
 
-	float pulse = 1.0f + 0.2f * sinf(powerup_pulse);
-	float sz = 20.0f * pulse;
-	int k, seg = 20;
+	pulse = 1.0f + 0.2f * sinf(powerup_pulse);
+	sz = 20.0f * pulse;
 
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	/* Outer glow */
-	glColor4f(1.0f, 0.85f, 0.0f, 0.25f);
-	draw_circle(powerup_x, powerup_y, sz * 2.0f, seg);
-
-	if (has_tex_powerup) {
-		glDisable(GL_BLEND);
-		draw_textured_quad(tex_powerup,
-			powerup_x - sz, powerup_y - sz, powerup_x + sz, powerup_y + sz);
-	} else {
-		/* Golden star shape */
-		glColor4f(1.0f, 0.85f, 0.0f, 0.9f);
+	if (powerup_map_type == POWERUP_SHIELD) {
+		/* Green glow */
+		glColor4f(0.0f, 1.0f, 0.3f, 0.2f);
+		draw_circle(powerup_x, powerup_y, sz * 2.0f, seg);
+		/* Shield shape - green diamond */
+		glColor4f(0.1f, 0.9f, 0.3f, 0.85f);
 		glBegin(GL_TRIANGLE_FAN);
 		glVertex2f(powerup_x, powerup_y);
-		for (k = 0; k <= seg; k++) {
-			float a = 2.0f * M_PI * k / seg;
-			float r = (k % 2 == 0) ? sz : sz * 0.5f;
+		glVertex2f(powerup_x, powerup_y + sz * 1.2f);
+		glVertex2f(powerup_x - sz * 0.8f, powerup_y + sz * 0.3f);
+		glVertex2f(powerup_x - sz * 0.7f, powerup_y - sz * 0.6f);
+		glVertex2f(powerup_x, powerup_y - sz * 1.0f);
+		glVertex2f(powerup_x + sz * 0.7f, powerup_y - sz * 0.6f);
+		glVertex2f(powerup_x + sz * 0.8f, powerup_y + sz * 0.3f);
+		glVertex2f(powerup_x, powerup_y + sz * 1.2f);
+		glEnd();
+	} else if (powerup_map_type == POWERUP_BLACKHOLE) {
+		/* Dark purple glow */
+		glColor4f(0.3f, 0.0f, 0.4f, 0.25f);
+		draw_circle(powerup_x, powerup_y, sz * 2.0f, seg);
+		/* Spiral shape */
+		glColor4f(0.15f, 0.0f, 0.2f, 0.9f);
+		draw_circle(powerup_x, powerup_y, sz * 0.6f, seg);
+		glColor4f(0.5f, 0.1f, 0.7f, 0.7f);
+		glBegin(GL_LINE_STRIP);
+		for (k = 0; k <= 40; k++) {
+			float a = (float)k / 40.0f * 4.0f * M_PI + powerup_pulse;
+			float r = sz * 0.3f + (float)k / 40.0f * sz * 0.7f;
 			glVertex2f(powerup_x + cosf(a) * r, powerup_y + sinf(a) * r);
 		}
 		glEnd();
-		glDisable(GL_BLEND);
 	}
+
+	glDisable(GL_BLEND);
+}
+
+/* ========== Placed black hole drawing ========== */
+
+static void draw_placed_blackhole(void)
+{
+	int k, seg = 48;
+	float spin, alpha, r, ring_pulse;
+
+	if (!blackhole_placed) return;
+
+	int elapsed = glutGet(GLUT_ELAPSED_TIME) - blackhole_start_ms;
+	float t = (float)elapsed / BLACKHOLE_DURATION_MS;
+	alpha = (t < 0.85f) ? 0.7f : 0.7f * (1.0f - t) / 0.15f;
+	if (alpha < 0) alpha = 0;
+	r = BLACKHOLE_PLACE_RADIUS;
+	spin = blackhole_anim * 2.0f;
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	if (has_tex_blackhole) {
+		glColor4f(1.0f, 1.0f, 1.0f, alpha);
+		draw_textured_quad(tex_blackhole,
+			blackhole_x - r, blackhole_y - r,
+			blackhole_x + r, blackhole_y + r);
+	} else {
+		/* Accretion disk - rotating wobbling ring */
+		glColor4f(0.4f, 0.1f, 0.6f, alpha * 0.3f);
+		glBegin(GL_TRIANGLE_STRIP);
+		for (k = 0; k <= seg; k++) {
+			float a = 2.0f * M_PI * k / seg + spin;
+			float wobble = 1.0f + 0.15f * sinf(a * 3.0f + blackhole_anim);
+			glVertex2f(blackhole_x + cosf(a) * r * wobble,
+				blackhole_y + sinf(a) * r * wobble);
+			glVertex2f(blackhole_x + cosf(a) * r * 0.55f * wobble,
+				blackhole_y + sinf(a) * r * 0.55f * wobble);
+		}
+		glEnd();
+
+		/* Dark core */
+		glColor4f(0.03f, 0.0f, 0.05f, alpha * 0.95f);
+		draw_circle(blackhole_x, blackhole_y, r * 0.4f, 32);
+
+		/* Event horizon ring */
+		ring_pulse = 1.0f + 0.05f * sinf(blackhole_anim * 3.0f);
+		glColor4f(0.6f, 0.2f, 0.8f, alpha * 0.6f);
+		glLineWidth(2.0f);
+		glBegin(GL_LINE_LOOP);
+		for (k = 0; k < seg; k++) {
+			float a = 2.0f * M_PI * k / seg;
+			glVertex2f(blackhole_x + cosf(a) * r * 0.45f * ring_pulse,
+				blackhole_y + sinf(a) * r * 0.45f * ring_pulse);
+		}
+		glEnd();
+		glLineWidth(1.0f);
+	}
+
+	glDisable(GL_BLEND);
 }
 
 /* ========== Enemy management ========== */
@@ -553,6 +767,12 @@ static void draw_powerup_pickup(void)
 static void kill_enemy(int idx)
 {
 	int j;
+	float ecx = rect_cx(enemy[idx]);
+	float ecy = rect_cy(enemy[idx]);
+	float esz = enemy_visual_size[idx] * screen_height;
+
+	spawn_death_anim(ecx, ecy, esz, enemy_type[idx]);
+
 	for (j = idx; j < num_enemies - 1; j++) {
 		enemy[j] = enemy[j + 1];
 		enemy_dist_y[j] = enemy_dist_y[j + 1];
@@ -560,6 +780,7 @@ static void kill_enemy(int idx)
 		last_dy[j] = last_dy[j + 1];
 		last_dx[j] = last_dx[j + 1];
 		enemy_size[j] = enemy_size[j + 1];
+		enemy_visual_size[j] = enemy_visual_size[j + 1];
 		enemy_speed[j] = enemy_speed[j + 1];
 		enemy_dir_y[j] = enemy_dir_y[j + 1];
 		enemy_dir_x[j] = enemy_dir_x[j + 1];
@@ -577,7 +798,7 @@ static void set_enemy_type_and_stats(int i)
 	if (i > 0 && i % 10 == 0) {
 		enemy_type[i] = ENEMY_BOSS;
 		enemy_size[i] = BOSS_SIZE;
-		enemy_speed[i] = fast_enemy_speed * 1.2f;
+		enemy_speed[i] = fast_enemy_speed * 0.85f;
 	} else if (i > 0 && i % 4 == 0) {
 		enemy_type[i] = ENEMY_MIDBOSS;
 		enemy_size[i] = MIDBOSS_SIZE;
@@ -620,6 +841,7 @@ void add_enemy(void)
 	enemy_dir_y[i] = (rand_range(1, 2) == 1) ? 1 : -1;
 	enemy_dir_x[i] = (rand_range(1, 2) == 1) ? 1 : -1;
 	enemy_boost[i] = 0;
+	enemy_visual_size[i] = enemy_size[i];
 }
 
 static void enemy_eat_food(int i)
@@ -652,10 +874,13 @@ void reset(void)
 	game_over_msg[0] = '\0';
 
 	powerup_on_map = 0;
+	powerup_map_type = POWERUP_NONE;
 	powerup_stored = POWERUP_NONE;
 	powerup_effect = POWERUP_NONE;
+	blackhole_placed = 0;
 	snake_boost = 0;
 	memset(enemy_boost, 0, sizeof(enemy_boost));
+	memset(death_anims, 0, sizeof(death_anims));
 
 	for (i = 0; i < num_enemies; i++) {
 		enemy_dist_y[i] = i * enemy_gap;
@@ -665,6 +890,7 @@ void reset(void)
 		enemy_type[i] = ENEMY_NORMAL;
 		enemy_speed[i] = slow_enemy_speed;
 		enemy_size[i] = SMALL_SIZE;
+		enemy_visual_size[i] = SMALL_SIZE;
 	}
 }
 
@@ -721,6 +947,15 @@ static void build_game_over_msg(void)
 		strcat(game_over_msg, " points ! Tu as un certain talent !");
 	else
 		strcat(game_over_msg, " points ! Du jamais vu ! Tu deviendras un grand de ce monde...");
+}
+
+static void do_game_over(void)
+{
+	build_game_over_msg();
+	game_over = 1;
+	play_sfx(sfx_collision_sound, SFX_CHAN_COLLISION, 500);
+	if (sound_initialized) Mix_HaltMusic();
+	play_sfx(sfx_gameover_sound, SFX_CHAN_GAMEOVER, -1);
 }
 
 /* ========== Display ========== */
@@ -802,6 +1037,9 @@ void display(void)
 	/* Power-up pickup on map */
 	draw_powerup_pickup();
 
+	/* Placed black hole */
+	draw_placed_blackhole();
+
 	/* Orb */
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -825,38 +1063,24 @@ void display(void)
 		bitmap_text(-W / 2 + 10, H / 2 - 50, pup_buf, GLUT_BITMAP_HELVETICA_18);
 	}
 
-	/* Active power-up effects (visual) */
-	if (powerup_effect != POWERUP_NONE) {
+	/* Shield active visual */
+	if (powerup_effect == POWERUP_SHIELD) {
 		float scx = rect_cx(snake[0]), scy = rect_cy(snake[0]);
+		int remaining = SHIELD_DURATION_MS - (glutGet(GLUT_ELAPSED_TIME) - powerup_start_ms);
+		float alpha = (remaining > 500) ? 0.3f : 0.3f * (remaining / 500.0f);
+		if (alpha < 0) alpha = 0;
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-		if (powerup_effect == POWERUP_SHIELD) {
-			int remaining = SHIELD_DURATION_MS - (glutGet(GLUT_ELAPSED_TIME) - powerup_start_ms);
-			float alpha = (remaining > 500) ? 0.3f : 0.3f * (remaining / 500.0f);
-			if (alpha < 0) alpha = 0;
-			glColor4f(0.0f, 1.0f, 0.2f, alpha);
-			draw_circle(scx, scy, SHIELD_RADIUS, 32);
-		} else if (powerup_effect == POWERUP_BLACKHOLE) {
-			int elapsed = glutGet(GLUT_ELAPSED_TIME) - powerup_start_ms;
-			float t = (float)elapsed / BLACKHOLE_DURATION_MS;
-			float alpha = (t < 0.9f) ? 0.4f : 0.4f * (1.0f - t) / 0.1f;
-			if (alpha < 0) alpha = 0;
-			float bh_pulse = 1.0f + 0.1f * sinf(elapsed * 0.01f);
-			float r = BLACKHOLE_RADIUS * bh_pulse;
-
-			glColor4f(0.1f, 0.0f, 0.15f, alpha * 0.5f);
-			draw_circle(scx, scy, r, 32);
-			glColor4f(0.3f, 0.0f, 0.5f, alpha);
-			draw_circle(scx, scy, r * 0.3f, 32);
-		}
-
+		glColor4f(0.0f, 1.0f, 0.2f, alpha);
+		draw_circle(scx, scy, SHIELD_RADIUS, 32);
 		glDisable(GL_BLEND);
 	}
 
 	/* Enemies */
 	for (i = 0; i < num_enemies; i++) {
-		float sz = enemy_size[i] * H;
+		/* Smooth visual size interpolation */
+		enemy_visual_size[i] += (enemy_size[i] - enemy_visual_size[i]) * 0.08f;
+		float sz = enemy_visual_size[i] * H;
 
 		if (enemy_dist_y[i] >= H - 2 * enemy_size[i] * H)
 			enemy_dist_y[i] = H - 2 * enemy_size[i] * H;
@@ -909,10 +1133,16 @@ void display(void)
 		if (difficulty != DIFF_EASY && collision(enemy[i], food_rect))
 			enemy_eat_food(i);
 
+		/* Enemy eats powerup */
+		if (powerup_on_map && collision(enemy[i], powerup_rect)) {
+			powerup_on_map = 0;
+			powerup_map_type = POWERUP_NONE;
+		}
+
 		/* Enemy-snake collision */
 		if (!game_over && collision(enemy[i], snake[0])) {
 			if (powerup_effect == POWERUP_SHIELD) {
-				/* Shield repels enemy */
+				/* Shield repels and damages enemy */
 				float dx = rect_cx(enemy[i]) - rect_cx(snake[0]);
 				float dy = rect_cy(enemy[i]) - rect_cy(snake[0]);
 				float len = sqrtf(dx * dx + dy * dy);
@@ -921,15 +1151,18 @@ void display(void)
 				enemy_dist_y[i] += (dy / len) * 50.0f;
 				enemy_dir_x[i] = (dx > 0) ? 1 : -1;
 				enemy_dir_y[i] = (dy > 0) ? 1 : -1;
+				enemy_size[i] *= SHIELD_DAMAGE;
+				enemy_speed[i] *= 0.9f;
+				if (enemy_size[i] < SMALL_SIZE * 0.4f)
+					kill_enemy(i);
 			} else {
-				build_game_over_msg();
-				game_over = 1;
-				play_sfx(sfx_collision_sound, SFX_CHAN_COLLISION, 500);
-				if (sound_initialized) Mix_HaltMusic();
-				play_sfx(sfx_gameover_sound, SFX_CHAN_GAMEOVER, -1);
+				do_game_over();
 			}
 		}
 	}
+
+	/* Death animations */
+	draw_death_anims();
 
 	/* Game over overlay */
 	if (game_over) {
@@ -960,6 +1193,7 @@ void idle(void)
 	if (paused) return;
 
 	if (game_over) {
+		update_death_anims();
 		glutPostRedisplay();
 		return;
 	}
@@ -970,14 +1204,18 @@ void idle(void)
 		points++;
 		food_cycle = food_timer - 1;
 		add_enemy();
-		play_sfx(sfx_eat_sound, SFX_CHAN_EAT, 800);
+		/* Play instant beep, then the configured sound */
+		play_sfx(sfx_eat_beep, SFX_CHAN_EAT, -1);
+		if (sfx_eat_sound)
+			play_sfx(sfx_eat_sound, 5, 800);
 		update_music();
 
 		/* Maybe spawn a power-up */
 		if (!powerup_on_map && powerup_stored == POWERUP_NONE
-			&& powerup_effect == POWERUP_NONE
-			&& points >= 5 && rand() % 100 < POWERUP_SPAWN_CHANCE) {
-			spawn_powerup();
+			&& points >= POWERUP_SPAWN_SCORE
+			&& rand() % 100 < POWERUP_SPAWN_CHANCE) {
+			int type = (rand() % 2 == 0) ? POWERUP_SHIELD : POWERUP_BLACKHOLE;
+			spawn_powerup(type);
 		}
 	}
 
@@ -1034,7 +1272,7 @@ void idle(void)
 		float scx = rect_cx(snake[0]), scy = rect_cy(snake[0]);
 		if (point_in_orb(scx, scy)) {
 			compute_orb_boost(scx, scy, &snake_boost, &snake_boost_dx, &snake_boost_dy);
-			play_sfx(sfx_orb_sound, SFX_CHAN_ORB, 1500);
+			play_sfx(sfx_orb_sound, SFX_CHAN_ORB, -1);
 			orb.active = 0;
 		}
 
@@ -1063,43 +1301,65 @@ void idle(void)
 
 		if (collision(snake[0], powerup_rect)) {
 			powerup_on_map = 0;
-			powerup_stored = (rand() % 2 == 0) ? POWERUP_SHIELD : POWERUP_BLACKHOLE;
+			powerup_stored = powerup_map_type;
+			powerup_map_type = POWERUP_NONE;
 			play_sfx(sfx_powerup_sound, SFX_CHAN_POWERUP, 1000);
 		}
 	}
 
-	/* Active power-up effects */
+	/* Shield timeout */
 	if (powerup_effect == POWERUP_SHIELD) {
 		int elapsed = glutGet(GLUT_ELAPSED_TIME) - powerup_start_ms;
 		if (elapsed >= SHIELD_DURATION_MS)
 			powerup_effect = POWERUP_NONE;
 	}
 
-	if (powerup_effect == POWERUP_BLACKHOLE) {
-		int elapsed = glutGet(GLUT_ELAPSED_TIME) - powerup_start_ms;
+	/* Placed black hole logic */
+	if (blackhole_placed) {
+		int elapsed = glutGet(GLUT_ELAPSED_TIME) - blackhole_start_ms;
+		blackhole_anim += 0.05f;
+
 		if (elapsed >= BLACKHOLE_DURATION_MS) {
-			powerup_effect = POWERUP_NONE;
+			blackhole_placed = 0;
 		} else {
-			float scx = rect_cx(snake[0]), scy = rect_cy(snake[0]);
 			for (i = num_enemies - 1; i >= 0; i--) {
 				float ecx = rect_cx(enemy[i]), ecy = rect_cy(enemy[i]);
-				float dx = ecx - scx, dy = ecy - scy;
+				float dx = ecx - blackhole_x, dy = ecy - blackhole_y;
 				float dist = sqrtf(dx * dx + dy * dy);
-				if (dist < BLACKHOLE_RADIUS) {
-					enemy_size[i] *= 0.998f;
-					enemy_speed[i] *= 0.999f;
+				if (dist < BLACKHOLE_PLACE_RADIUS) {
 					/* Pull toward center */
-					if (dist > 10.0f) {
-						enemy_dist_x[i] -= (dx / dist) * 0.5f;
-						enemy_dist_y[i] -= (dy / dist) * 0.5f;
+					if (dist > 5.0f) {
+						enemy_dist_x[i] -= (dx / dist) * 1.0f;
+						enemy_dist_y[i] -= (dy / dist) * 1.0f;
 					}
-					/* Kill if shrunk enough */
-					if (enemy_size[i] < SMALL_SIZE * 0.4f)
-						kill_enemy(i);
+					if (dist < BLACKHOLE_KILL_RADIUS) {
+						/* Kill zone: small untouched enemies die instantly */
+						if (enemy_size[i] <= SMALL_SIZE * 1.01f) {
+							kill_enemy(i);
+						} else {
+							/* Damage larger enemies */
+							enemy_size[i] *= 0.99f;
+							enemy_speed[i] *= 0.995f;
+							if (enemy_size[i] < SMALL_SIZE * 0.4f)
+								kill_enemy(i);
+						}
+					}
 				}
+			}
+
+			/* Snake walks on placed black hole → death */
+			if (!game_over) {
+				float scx = rect_cx(snake[0]), scy = rect_cy(snake[0]);
+				float dx = scx - blackhole_x, dy = scy - blackhole_y;
+				float dist = sqrtf(dx * dx + dy * dy);
+				if (dist < BLACKHOLE_KILL_RADIUS)
+					do_game_over();
 			}
 		}
 	}
+
+	/* Death animations */
+	update_death_anims();
 
 	glutPostRedisplay();
 }
@@ -1149,12 +1409,19 @@ void keypress(unsigned char key, int x, int y)
 		break;
 	case 'c': case 'C':
 		if (powerup_stored != POWERUP_NONE && powerup_effect == POWERUP_NONE) {
-			powerup_effect = powerup_stored;
-			powerup_start_ms = glutGet(GLUT_ELAPSED_TIME);
-			if (powerup_effect == POWERUP_SHIELD)
+			if (powerup_stored == POWERUP_SHIELD) {
+				powerup_effect = POWERUP_SHIELD;
+				powerup_start_ms = glutGet(GLUT_ELAPSED_TIME);
 				play_sfx(sfx_shield_sound, SFX_CHAN_POWERUP, -1);
-			else
+			} else if (powerup_stored == POWERUP_BLACKHOLE) {
+				/* Place black hole at snake position */
+				blackhole_placed = 1;
+				blackhole_x = rect_cx(snake[0]);
+				blackhole_y = rect_cy(snake[0]);
+				blackhole_start_ms = glutGet(GLUT_ELAPSED_TIME);
+				blackhole_anim = 0;
 				play_sfx(sfx_blackhole_sound, SFX_CHAN_POWERUP, -1);
+			}
 			powerup_stored = POWERUP_NONE;
 		}
 		break;
@@ -1269,6 +1536,8 @@ int main(int argc, char *argv[])
 		has_tex_boss = (load_and_bind(config.img_enemy_boss, &tex_enemy_boss) > 0);
 	if (config.img_powerup[0])
 		has_tex_powerup = (load_and_bind(config.img_powerup, &tex_powerup) > 0);
+	if (config.img_blackhole[0])
+		has_tex_blackhole = (load_and_bind(config.img_blackhole, &tex_blackhole) > 0);
 
 	/* Sound */
 	init_sound();

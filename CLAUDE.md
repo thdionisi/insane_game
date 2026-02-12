@@ -29,7 +29,7 @@ sudo apt-get install libgl-dev libglu1-mesa-dev freeglut3-dev libdevil-dev libsd
 Le jeu lit un fichier de configuration (`snake_bizarre.cfg` par defaut) qui contient les chemins vers les images et les sons. Voir `snake_bizarre.cfg` pour le format.
 
 Images obligatoires dans le config : `snake`, `food`, `enemy_normal`.
-Images optionnelles : `enemy_midboss`, `enemy_boss`, `powerup` (sinon textures par defaut).
+Images optionnelles : `enemy_midboss`, `enemy_boss`, `blackhole` (sinon textures generees).
 Tous les sons sont optionnels (le jeu fonctionne sans).
 
 ### Difficulte (`-d`)
@@ -54,10 +54,10 @@ Apparait lors des collisions entre ennemis. Projette le snake ou un ennemi dans 
 
 ### Power-ups
 
-Apparaissent rarement apres 5 points (10% de chance a chaque nourriture mangee). Ramassez-les pour stocker un pouvoir, puis activez-le avec `c` :
+Apparaissent regulierement apres 3 points (40% de chance a chaque nourriture mangee). Le type (bouclier ou trou noir) est choisi aleatoirement et chacun a un visuel distinct sur la carte. Les ennemis peuvent aussi manger les power-ups. Ramassez-les pour stocker un pouvoir, puis activez-le avec `c` :
 
-- **Bouclier** (3s) : aura verte, repousse les ennemis au lieu de mourir
-- **Trou noir** (10s) : vortex sombre, attire, retrecit et ralentit les ennemis proches. Les plus petits meurent.
+- **Bouclier** (3s) : aura verte autour du snake. Repousse les ennemis et les blesse (retrecit + ralentit). Les plus petits meurent.
+- **Trou noir** : pose un vortex fixe a la position actuelle du snake (10s). Attire les ennemis proches, tue les petits non-nourris (avec animation de mort), blesse les autres. Attention : le snake meurt aussi s'il repasse dessus.
 
 ### Son
 
