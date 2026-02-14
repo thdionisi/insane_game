@@ -392,8 +392,11 @@ static void init_sound(void)
 		if (sfx_eat_sound)
 			Mix_VolumeChunk(sfx_eat_sound, MIX_MAX_VOLUME / 4);
 	}
-	if (config.sfx_gameover[0])
+	if (config.sfx_gameover[0]){
 		sfx_gameover_sound = Mix_LoadWAV(config.sfx_gameover);
+		if (sfx_gameover_sound)
+			Mix_VolumeChunk(sfx_gameover_sound, MIX_MAX_VOLUME / 4);
+  }
 	if (config.sfx_orb[0])
 		sfx_orb_sound = Mix_LoadWAV(config.sfx_orb);
 	if (config.sfx_collision[0]) {
@@ -904,14 +907,14 @@ static void apply_difficulty(int level)
 		food_timer = 600;
 		break;
 	case DIFF_HARD:
-		slow_enemy_speed = 2;
-		fast_enemy_speed = 4;
+		slow_enemy_speed = 3;
+		fast_enemy_speed = 6;
 		food_timer = 1800;
 		break;
 	default:
 		difficulty = DIFF_NORMAL;
-		slow_enemy_speed = 1.5;
-		fast_enemy_speed = 3;
+		slow_enemy_speed = 2;
+		fast_enemy_speed = 4;
 		food_timer = 1800;
 		break;
 	}
@@ -1133,12 +1136,6 @@ void display(void)
 		if (difficulty != DIFF_EASY && collision(enemy[i], food_rect))
 			enemy_eat_food(i);
 
-		/* Enemy eats powerup */
-		if (powerup_on_map && collision(enemy[i], powerup_rect)) {
-			powerup_on_map = 0;
-			powerup_map_type = POWERUP_NONE;
-		}
-
 		/* Enemy-snake collision */
 		if (!game_over && collision(enemy[i], snake[0])) {
 			if (powerup_effect == POWERUP_SHIELD) {
@@ -1348,7 +1345,7 @@ void idle(void)
 			}
 
 			/* Snake walks on placed black hole → death */
-			if (!game_over) {
+			if (!game_over && elapsed > 1500.0) {
 				float scx = rect_cx(snake[0]), scy = rect_cy(snake[0]);
 				float dx = scx - blackhole_x, dy = scy - blackhole_y;
 				float dist = sqrtf(dx * dx + dy * dy);
