@@ -62,6 +62,7 @@
 
 #define MAX_DEATH_ANIMS 20
 #define DEATH_ANIM_FRAMES 40
+#define TICK_INTERVAL 16
 
 /* ========== Types ========== */
 
@@ -841,8 +842,8 @@ void add_enemy(void)
 		dist = rect_distance(enemy[i], snake[0]);
 	}
 
-	enemy_dir_y[i] = (rand_range(1, 2) == 1) ? 1 : -1;
-	enemy_dir_x[i] = (rand_range(1, 2) == 1) ? 1 : -1;
+	enemy_dir_y[i] = (rand() % 2 == 0) ? 1 : -1;
+	enemy_dir_x[i] = (rand() % 2 == 0) ? 1 : -1;
 	enemy_boost[i] = 0;
 	enemy_visual_size[i] = enemy_size[i];
 }
@@ -935,21 +936,66 @@ static void start_game(void)
 
 static void build_game_over_msg(void)
 {
-	sprintf(game_over_msg, "%d", points);
-	if (points < 5)
-		strcat(game_over_msg, " points... C'est lamentable, affligeant, pitoyable...");
-	else if (points < 10)
-		strcat(game_over_msg, " points... Essaie la bataille ou les petits chevaux.");
-	else if (points < 15)
-		strcat(game_over_msg, " points... Bof bof !");
-	else if (points < 20)
-		strcat(game_over_msg, " points. L'Histoire ne retiendra pas cette partie.");
-	else if (points < 25)
-		strcat(game_over_msg, " points. Pas mal, c'est correct.");
-	else if (points < 30)
-		strcat(game_over_msg, " points ! Tu as un certain talent !");
-	else
-		strcat(game_over_msg, " points ! Du jamais vu ! Tu deviendras un grand de ce monde...");
+	static const char *t0[] = {
+		" pts. T'es serieux ? Mon poisson rouge fait mieux.",
+		" pts. T'as les reflexes d'une huitre sous Xanax.",
+		" pts. Desinstalle, c'est mieux pour tout le monde.",
+		" pts. Meme Stevie Wonder ferait mieux les yeux fermes.",
+		" pts. Tu joues avec les pieds ou c'est ton niveau ?",
+		" pts. Ma grand-mere de 94 ans eclate ton score.",
+		" pts. C'est un speedrun de la honte ou quoi ?",
+	};
+	static const char *t1[] = {
+		" pts. Aussi decevant que ta vie sentimentale.",
+		" pts. Ta mere joue mieux avec un trackpad.",
+		" pts. On dirait un ChatGPT qui essaie de jouer.",
+		" pts. Tu cumules les echecs comme les impots.",
+		" pts. Le stagiaire en PHP ferait mieux.",
+		" pts. T'as pas eu assez de calins etant petit ?",
+		" pts. Essaie les petits chevaux, c'est plus ton niveau.",
+	};
+	static const char *t2[] = {
+		" pts. Moyen. Comme ton dernier date Tinder.",
+		" pts. Le minimum syndical. Tres francais.",
+		" pts. C'est pas nul. Enfin si, un peu quand meme.",
+		" pts. Bof. J'en ai vu des meilleures en EHPAD.",
+		" pts. Ni bien ni mal. Comme ta coupe de cheveux.",
+		" pts. L'Histoire ne retiendra pas cette partie.",
+		" pts. Tu merites un prix... de la mediocrite.",
+	};
+	static const char *t3[] = {
+		" pts. OK t'es pas completement inutile finalement.",
+		" pts. Pas mal ! Presque aussi bon qu'un singe.",
+		" pts. Tes parents seraient presque fiers. Presque.",
+		" pts. Tu commences a meriter l'air que tu respires.",
+		" pts. Ca se respecte. T'as quand meme un QI a 2 chiffres.",
+		" pts. T'as enfin trouve ta vocation dans la vie.",
+	};
+	static const char *t4[] = {
+		" pts ! Respect. T'as vendu ton ame ou ta vie sociale ?",
+		" pts ! Impressionnant. Combien de jours sans douche ?",
+		" pts ! Les ennemis ont porte plainte pour harcelement.",
+		" pts ! Mets ca sur ton CV, t'as rien d'autre.",
+		" pts ! Talent pur ou gros no-life ? Les deux ?",
+		" pts ! T'es chaud. Les ennemis suent du slip.",
+	};
+	static const char *t5[] = {
+		" pts !! T'es un dieu. Ou un sale tricheur, au choix.",
+		" pts !! Chuck Norris a pris des notes.",
+		" pts !! Tes ennemis sont en therapie par ta faute.",
+		" pts !! Legendaire. T'as enfin reussi quelque chose.",
+		" pts !! On devrait t'etudier en labo. Ou t'interner.",
+		" pts !! Le FBI va te contacter pour tes reflexes.",
+	};
+	const char **tier;
+	int count;
+	if (points < 5)       { tier = t0; count = 7; }
+	else if (points < 10) { tier = t1; count = 7; }
+	else if (points < 15) { tier = t2; count = 7; }
+	else if (points < 20) { tier = t3; count = 6; }
+	else if (points < 30) { tier = t4; count = 6; }
+	else                  { tier = t5; count = 6; }
+	sprintf(game_over_msg, "%d%s", points, tier[rand() % count]);
 }
 
 static void do_game_over(void)
@@ -961,7 +1007,7 @@ static void do_game_over(void)
 	play_sfx(sfx_gameover_sound, SFX_CHAN_GAMEOVER, -1);
 }
 
-/* ========== Display ========== */
+/* ========== Display (pure rendering) ========== */
 
 void display(void)
 {
@@ -969,9 +1015,6 @@ void display(void)
 	float W = screen_width;
 	float H = screen_height;
 	float cell = SMALL_SIZE * H;
-
-	if (paused && !game_over)
-		return;
 
 	glClearColor(0.5f, 0.0f, 0.4f, 0.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -992,50 +1035,13 @@ void display(void)
 	draw_quad(-W / 2, -(H / 2 - 2 * cell), W / 2, -(H / 2 - 3 * cell));
 	glEnd();
 
-	/* Clamp snake */
-	if (snake_x <= -(W - cell) / 2) snake_x = -(W - cell) / 2;
-	if (snake_x >= (W - cell) / 2)  snake_x = (W - cell) / 2;
-	if (snake_y <= 0)               snake_y = 0;
-	if (snake_y >= H - cell)        snake_y = H - cell;
-
-	float sx1 = -cell / 2 + snake_x;
-	float sx2 = cell / 2 + snake_x;
-	float sy1 = -H / 2 + snake_y;
-	float sy2 = -H / 2 + cell + snake_y;
-	snake[0].xleft = sx1;
-	snake[0].xright = sx2;
-	snake[0].ydown = sy1;
-	snake[0].yup = sy2;
-
-	draw_textured_quad(tex_snake, sx1, sy1, sx2, sy2);
+	/* Snake */
+	draw_textured_quad(tex_snake,
+		snake[0].xleft, snake[0].ydown, snake[0].xright, snake[0].yup);
 
 	/* Food */
-	int fx, fy;
-	if (respawn_food) {
-		fx = rand_range(cell, W - cell);
-		fy = rand_range(1, H - cell);
-		food_x = fx;
-		food_y = fy;
-	} else {
-		fx = food_x;
-		fy = food_y;
-	}
-
-	float fl = -W / 2 + fx - cell;
-	float fr = -W / 2 + fx;
-	float fu = fy - H / 2 + cell;
-	float fd = fy - H / 2;
-	if (fu >= H / 2) fu = H / 2;
-
-	food_rect.xleft = fl;
-	food_rect.xright = fr;
-	food_rect.ydown = fd;
-	food_rect.yup = fu;
-
-	if (!game_over && collision(snake[0], food_rect))
-		food_eaten = 1;
-
-	draw_textured_quad(tex_food, fl, fd, fr, fu);
+	draw_textured_quad(tex_food,
+		food_rect.xleft, food_rect.ydown, food_rect.xright, food_rect.yup);
 
 	/* Power-up pickup on map */
 	draw_powerup_pickup();
@@ -1081,81 +1087,15 @@ void display(void)
 
 	/* Enemies */
 	for (i = 0; i < num_enemies; i++) {
-		/* Smooth visual size interpolation */
 		enemy_visual_size[i] += (enemy_size[i] - enemy_visual_size[i]) * 0.08f;
 		float sz = enemy_visual_size[i] * H;
-
-		if (enemy_dist_y[i] >= H - 2 * enemy_size[i] * H)
-			enemy_dist_y[i] = H - 2 * enemy_size[i] * H;
-		if (enemy_dist_y[i] <= -enemy_size[i] * H)
-			enemy_dist_y[i] = -enemy_size[i] * H;
-		if (enemy_dist_x[i] >= W)
-			enemy_dist_x[i] = W;
-		if (enemy_dist_x[i] <= enemy_size[i] * H)
-			enemy_dist_x[i] = enemy_size[i] * H;
 
 		float ex1 = -W / 2 + enemy_dist_x[i] - sz;
 		float ex2 = -W / 2 + enemy_dist_x[i];
 		float ey1 = enemy_dist_y[i] - (H / 2 - sz);
 		float ey2 = enemy_dist_y[i] - (H / 2 - 2 * sz);
 
-		if (ex1 <= -W / 2) enemy_dir_x[i] = 1;
-		if (ex2 >= W / 2)  enemy_dir_x[i] = -1;
-		if (ey1 <= -H / 2) enemy_dir_y[i] = 1;
-		if (ey2 >= H / 2)  enemy_dir_y[i] = -1;
-
-		enemy[i].xleft = ex1;
-		enemy[i].xright = ex2;
-		enemy[i].ydown = ey1;
-		enemy[i].yup = ey2;
-
 		draw_textured_quad(enemy_texture(i), ex1, ey1, ex2, ey2);
-
-		/* Enemy-enemy collision */
-		int j;
-		for (j = 0; j < i; j++) {
-			if (!collision(enemy[j], enemy[i]))
-				continue;
-
-			float dx = rect_cx(enemy[i]) - rect_cx(enemy[j]);
-			float dy = rect_cy(enemy[i]) - rect_cy(enemy[j]);
-
-			if (fabsf(dx) > fabsf(dy)) {
-				enemy_dir_x[i] = (dx > 0) ? 1 : -1;
-				enemy_dir_x[j] = (dx > 0) ? -1 : 1;
-			} else {
-				enemy_dir_y[i] = (dy > 0) ? 1 : -1;
-				enemy_dir_y[j] = (dy > 0) ? -1 : 1;
-			}
-
-			if (!orb.active)
-				spawn_orb();
-		}
-
-		/* Hard mode: enemy eats food */
-		if (difficulty != DIFF_EASY && collision(enemy[i], food_rect))
-			enemy_eat_food(i);
-
-		/* Enemy-snake collision */
-		if (!game_over && collision(enemy[i], snake[0])) {
-			if (powerup_effect == POWERUP_SHIELD) {
-				/* Shield repels and damages enemy */
-				float dx = rect_cx(enemy[i]) - rect_cx(snake[0]);
-				float dy = rect_cy(enemy[i]) - rect_cy(snake[0]);
-				float len = sqrtf(dx * dx + dy * dy);
-				if (len < 1.0f) len = 1.0f;
-				enemy_dist_x[i] += (dx / len) * 50.0f;
-				enemy_dist_y[i] += (dy / len) * 50.0f;
-				enemy_dir_x[i] = (dx > 0) ? 1 : -1;
-				enemy_dir_y[i] = (dy > 0) ? 1 : -1;
-				enemy_size[i] *= SHIELD_DAMAGE;
-				enemy_speed[i] *= 0.9f;
-				if (enemy_size[i] < SMALL_SIZE * 0.4f)
-					kill_enemy(i);
-			} else {
-				do_game_over();
-			}
-		}
 	}
 
 	/* Death animations */
@@ -1181,17 +1121,26 @@ void display(void)
 	glutSwapBuffers();
 }
 
-/* ========== Idle ========== */
+/* ========== Game tick (fixed timestep via glutTimerFunc) ========== */
 
-void idle(void)
+void game_tick(int value)
 {
 	int i;
+	float W = screen_width;
+	float H = screen_height;
+	float cell = SMALL_SIZE * H;
 
-	if (paused) return;
+	(void)value;
+
+	if (paused) {
+		glutTimerFunc(TICK_INTERVAL, game_tick, 0);
+		return;
+	}
 
 	if (game_over) {
 		update_death_anims();
 		glutPostRedisplay();
+		glutTimerFunc(TICK_INTERVAL, game_tick, 0);
 		return;
 	}
 
@@ -1201,13 +1150,11 @@ void idle(void)
 		points++;
 		food_cycle = food_timer - 1;
 		add_enemy();
-		/* Play instant beep, then the configured sound */
 		play_sfx(sfx_eat_beep, SFX_CHAN_EAT, -1);
 		if (sfx_eat_sound)
 			play_sfx(sfx_eat_sound, 5, 800);
 		update_music();
 
-		/* Maybe spawn a power-up */
 		if (!powerup_on_map && powerup_stored == POWERUP_NONE
 			&& points >= POWERUP_SPAWN_SCORE
 			&& rand() % 100 < POWERUP_SPAWN_CHANCE) {
@@ -1216,6 +1163,7 @@ void idle(void)
 		}
 	}
 
+	/* Enemy movement */
 	for (i = 0; i < num_enemies; i++) {
 		if (food_cycle % 10 == 0) {
 			int prev_y = enemy_dist_y[i];
@@ -1230,6 +1178,7 @@ void idle(void)
 		}
 	}
 
+	/* Snake movement */
 	if (direction == DIR_UP)    snake_y += snake_speed;
 	if (direction == DIR_DOWN)  snake_y -= snake_speed;
 	if (direction == DIR_LEFT)  snake_x -= snake_speed;
@@ -1253,12 +1202,129 @@ void idle(void)
 		}
 	}
 
+	/* Enemy boundary bounce (fixes enemies getting stuck at edges) */
+	for (i = 0; i < num_enemies; i++) {
+		float max_y = H - 2 * enemy_size[i] * H;
+		float min_y = -enemy_size[i] * H;
+		float max_x = W;
+		float min_x = enemy_size[i] * H;
+
+		if (enemy_dist_y[i] >= max_y) {
+			enemy_dist_y[i] = max_y;
+			enemy_dir_y[i] = -1;
+			if (last_dy[i] > 0) last_dy[i] = -last_dy[i];
+		}
+		if (enemy_dist_y[i] <= min_y) {
+			enemy_dist_y[i] = min_y;
+			enemy_dir_y[i] = 1;
+			if (last_dy[i] < 0) last_dy[i] = -last_dy[i];
+		}
+		if (enemy_dist_x[i] >= max_x) {
+			enemy_dist_x[i] = max_x;
+			enemy_dir_x[i] = -1;
+			if (last_dx[i] > 0) last_dx[i] = -last_dx[i];
+		}
+		if (enemy_dist_x[i] <= min_x) {
+			enemy_dist_x[i] = min_x;
+			enemy_dir_x[i] = 1;
+			if (last_dx[i] < 0) last_dx[i] = -last_dx[i];
+		}
+	}
+
+	/* Food cycle */
 	food_cycle++;
 	if (food_cycle == food_timer) {
 		food_cycle = 0;
 		respawn_food = 1;
 	} else {
 		respawn_food = 0;
+	}
+
+	/* Clamp snake */
+	if (snake_x <= -(W - cell) / 2) snake_x = -(W - cell) / 2;
+	if (snake_x >= (W - cell) / 2)  snake_x = (W - cell) / 2;
+	if (snake_y <= 0)               snake_y = 0;
+	if (snake_y >= H - cell)        snake_y = H - cell;
+
+	/* Update snake rect */
+	snake[0].xleft = -cell / 2 + snake_x;
+	snake[0].xright = cell / 2 + snake_x;
+	snake[0].ydown = -H / 2 + snake_y;
+	snake[0].yup = -H / 2 + cell + snake_y;
+
+	/* Food position + collision */
+	if (respawn_food) {
+		food_x = rand_range(cell, W - cell);
+		food_y = rand_range(1, H - cell);
+	}
+	{
+		float fl = -W / 2 + food_x - cell;
+		float fr = -W / 2 + food_x;
+		float fu = food_y - H / 2 + cell;
+		float fd = food_y - H / 2;
+		if (fu >= H / 2) fu = H / 2;
+		food_rect.xleft = fl;
+		food_rect.xright = fr;
+		food_rect.ydown = fd;
+		food_rect.yup = fu;
+	}
+	if (!game_over && collision(snake[0], food_rect))
+		food_eaten = 1;
+
+	/* Enemy rects + all collision logic */
+	for (i = 0; i < num_enemies; i++) {
+		float sz = enemy_size[i] * H;
+		float ex1 = -W / 2 + enemy_dist_x[i] - sz;
+		float ex2 = -W / 2 + enemy_dist_x[i];
+		float ey1 = enemy_dist_y[i] - (H / 2 - sz);
+		float ey2 = enemy_dist_y[i] - (H / 2 - 2 * sz);
+
+		enemy[i].xleft = ex1;
+		enemy[i].xright = ex2;
+		enemy[i].ydown = ey1;
+		enemy[i].yup = ey2;
+
+		int j;
+		for (j = 0; j < i; j++) {
+			if (!collision(enemy[j], enemy[i]))
+				continue;
+
+			float dx = rect_cx(enemy[i]) - rect_cx(enemy[j]);
+			float dy = rect_cy(enemy[i]) - rect_cy(enemy[j]);
+
+			if (fabsf(dx) > fabsf(dy)) {
+				enemy_dir_x[i] = (dx > 0) ? 1 : -1;
+				enemy_dir_x[j] = (dx > 0) ? -1 : 1;
+			} else {
+				enemy_dir_y[i] = (dy > 0) ? 1 : -1;
+				enemy_dir_y[j] = (dy > 0) ? -1 : 1;
+			}
+
+			if (!orb.active)
+				spawn_orb();
+		}
+
+		if (difficulty != DIFF_EASY && collision(enemy[i], food_rect))
+			enemy_eat_food(i);
+
+		if (!game_over && collision(enemy[i], snake[0])) {
+			if (powerup_effect == POWERUP_SHIELD) {
+				float dx = rect_cx(enemy[i]) - rect_cx(snake[0]);
+				float dy = rect_cy(enemy[i]) - rect_cy(snake[0]);
+				float len = sqrtf(dx * dx + dy * dy);
+				if (len < 1.0f) len = 1.0f;
+				enemy_dist_x[i] += (dx / len) * 50.0f;
+				enemy_dist_y[i] += (dy / len) * 50.0f;
+				enemy_dir_x[i] = (dx > 0) ? 1 : -1;
+				enemy_dir_y[i] = (dy > 0) ? 1 : -1;
+				enemy_size[i] *= SHIELD_DAMAGE;
+				enemy_speed[i] *= 0.9f;
+				if (enemy_size[i] < SMALL_SIZE * 0.4f)
+					kill_enemy(i);
+			} else {
+				do_game_over();
+			}
+		}
 	}
 
 	/* Orb interactions */
@@ -1324,17 +1390,14 @@ void idle(void)
 				float dx = ecx - blackhole_x, dy = ecy - blackhole_y;
 				float dist = sqrtf(dx * dx + dy * dy);
 				if (dist < BLACKHOLE_PLACE_RADIUS) {
-					/* Pull toward center */
 					if (dist > 5.0f) {
 						enemy_dist_x[i] -= (dx / dist) * 1.0f;
 						enemy_dist_y[i] -= (dy / dist) * 1.0f;
 					}
 					if (dist < BLACKHOLE_KILL_RADIUS) {
-						/* Kill zone: small untouched enemies die instantly */
 						if (enemy_size[i] <= SMALL_SIZE * 1.01f) {
 							kill_enemy(i);
 						} else {
-							/* Damage larger enemies */
 							enemy_size[i] *= 0.99f;
 							enemy_speed[i] *= 0.995f;
 							if (enemy_size[i] < SMALL_SIZE * 0.4f)
@@ -1344,8 +1407,7 @@ void idle(void)
 				}
 			}
 
-			/* Snake walks on placed black hole → death */
-			if (!game_over && elapsed > 1500.0) {
+			if (!game_over && elapsed > 1500) {
 				float scx = rect_cx(snake[0]), scy = rect_cy(snake[0]);
 				float dx = scx - blackhole_x, dy = scy - blackhole_y;
 				float dist = sqrtf(dx * dx + dy * dy);
@@ -1359,6 +1421,7 @@ void idle(void)
 	update_death_anims();
 
 	glutPostRedisplay();
+	glutTimerFunc(TICK_INTERVAL, game_tick, 0);
 }
 
 /* ========== Reshape ========== */
@@ -1543,7 +1606,7 @@ int main(int argc, char *argv[])
 
 	atexit(cleanup_sound);
 
-	glutIdleFunc(idle);
+	glutTimerFunc(TICK_INTERVAL, game_tick, 0);
 	glutKeyboardFunc(keypress);
 	glutSpecialFunc(special_keys);
 	glutMainLoop();
